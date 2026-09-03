@@ -2,13 +2,15 @@ from openai import OpenAI
 
 from app.config import settings
 
+MODEL = "gpt-5.6-terra"
+
 client = OpenAI(api_key=settings.openai_api_key)
 
 
 def research_and_answer(question: str) -> dict:
     """Ask the model to research the question via web search and answer it."""
     response = client.responses.create(
-        model=settings.openai_model,
+        model=MODEL,
         tools=[{"type": "web_search_preview"}],
         input=question,
     )
