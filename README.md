@@ -29,8 +29,8 @@ This project builds an **agentic RAG (Retrieval-Augmented Generation) system** t
  └──────────────────┘      └────────────────────┘
 ```
 
-- **traefik** — reverse proxy / router. Routes `/` to the frontend and `/api/*` to the backend (stripping the `/api` prefix before it reaches FastAPI). Dashboard at `localhost:8080`.
-- **backend** — the FastAPI app from before (`/ask` endpoint), now living in [backend/app](backend/app).
+- **traefik** — reverse proxy / router. Routes `/` to the frontend and `/api/*` to the backend, passing the full path through unchanged. Dashboard at `localhost:8080`.
+- **backend** — the FastAPI app from before (`/api/ask` endpoint), now living in [backend/app](backend/app).
 - **frontend** — a React (Vite) scaffold in [frontend/src](frontend/src). Currently just a text input + button, not yet wired to the backend.
 - A database + database-manager service will be added later.
 

@@ -26,8 +26,6 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.backend.rule=PathPrefix(`/api`)"
-      - "traefik.http.middlewares.backend-strip.stripprefix.prefixes=/api"
-      - "traefik.http.routers.backend.middlewares=backend-strip"
       - "traefik.http.services.backend.loadbalancer.server.port=8000"
 
   frontend:
