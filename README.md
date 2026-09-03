@@ -46,7 +46,7 @@ docker compose up --build
 - Backend docs directly: [http://localhost/api/docs](http://localhost/api/docs)
 - Traefik dashboard: [http://localhost:8080](http://localhost:8080)
 
-> **macOS + Docker Desktop note:** if Traefik can't reach the Docker socket (check `docker compose logs traefik`), your Docker Desktop context may not expose `/var/run/docker.sock` on the host. Find your real socket with `docker context inspect | grep Host`, then run compose with e.g. `DOCKER_SOCK=/Users/<you>/.docker/run/docker.sock docker compose up --build`.
+> **Traefik can't reach the Docker socket?** Check `docker compose logs traefik` for repeated `Failed to retrieve information of the docker client and server host` errors. This has been observed when the Traefik image version is older than your local Docker daemon (`docker version --format '{{.Server.Version}}'`) — its bundled Docker API client fails to negotiate with a newer daemon. Bump the `traefik` image tag in `docker-compose.yml` to a more recent release.
 
 ### `POST /api/ask`
 
