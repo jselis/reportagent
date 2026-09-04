@@ -11,10 +11,42 @@ body {
   text-align: center;
 }
 
-.ask-bar {
+.mode-selector {
   display: flex;
   gap: 0.5rem;
   margin-top: 1.5rem;
+}
+
+.mode-option {
+  position: relative;
+  flex: 1;
+  padding: 0.5rem 1rem;
+  font-size: 0.9rem;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background: white;
+  color: #333;
+  cursor: pointer;
+  user-select: none;
+}
+
+.mode-option input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.mode-option.active {
+  background: #333;
+  color: white;
+  border-color: #333;
+}
+
+.ask-bar {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1rem;
 }
 
 .ask-bar input {

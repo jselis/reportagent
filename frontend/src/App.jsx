@@ -1,27 +1,71 @@
 import { useState } from "react";
 
+const MODES = {
+  ask: {
+    label: "Ask",
+    url: "/api/ask",
+    field: "question",
+    placeholder: "Ask a question...",
+    resultLabel: "Answer",
+  },
+  summarize: {
+    label: "Summarize",
+    url: "/api/summarize",
+    field: "text",
+    placeholder: "Enter text to summarize...",
+    resultLabel: "Summary",
+  },
+  sentiment: {
+    label: "Analyze Sentiment",
+    url: "/api/analyze-sentiment",
+    field: "text",
+    placeholder: "Enter text to analyze...",
+    resultLabel: "Sentiment",
+  },
+};
+
+function formatResult(mode, data) {
+  if (mode === "ask") return data.answer.text;
+  if (mode === "summarize") return data.summary.text;
+  if (mode === "sentiment") {
+    return `${data.sentiment.label} (confidence: ${data.sentiment.confidence.toFixed(2)})`;
+  }
+  return "";
+}
+
 function App() {
-  const [question, setQuestion] = useState("");
+  const [mode, setMode] = useState("ask");
+  const [inputText, setInputText] = useState("");
   const [loading, setLoading] = useState(false);
-  const [answer, setAnswer] = useState("");
+  const [result, setResult] = useState("");
   const [ttft, setTtft] = useState(null);
   const [responseTime, setResponseTime] = useState(null);
   const [error, setError] = useState(null);
 
-  const handleAsk = async () => {
-    if (!question.trim() || loading) return;
+  const handleModeChange = (newMode) => {
+    setMode(newMode);
+    setResult("");
+    setTtft(null);
+    setResponseTime(null);
+    setError(null);
+  };
+
+  const handleSubmit = async () => {
+    if (!inputText.trim() || loading) return;
+
+    const { url, field } = MODES[mode];
 
     setLoading(true);
     setError(null);
-    setAnswer("");
+    setResult("");
     setTtft(null);
     setResponseTime(null);
 
     try {
-      const res = await fetch("/api/ask", {
+      const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question }),
+        body: JSON.stringify({ [field]: inputText }),
       });
 
       const data = await res.json();
@@ -31,7 +75,7 @@ function App() {
         return;
       }
 
-      setAnswer(data.answer.text);
+      setResult(formatResult(mode, data));
       setTtft(data.ttft_seconds);
       setResponseTime(data.response_time_seconds);
     } catch (err) {
@@ -44,24 +88,43 @@ function App() {
   return (
     <div className="app">
       <h1>reportagent</h1>
+
+      <div className="mode-selector">
+        {Object.entries(MODES).map(([value, { label }]) => (
+          <label
+            key={value}
+            className={`mode-option ${mode === value ? "active" : ""}`}
+          >
+            <input
+              type="radio"
+              name="mode"
+              value={value}
+              checked={mode === value}
+              onChange={() => handleModeChange(value)}
+            />
+            {label}
+          </label>
+        ))}
+      </div>
+
       <div className="ask-bar">
         <input
           type="text"
-          placeholder="Ask a question..."
-          value={question}
-          onChange={(e) => setQuestion(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && handleAsk()}
+          placeholder={MODES[mode].placeholder}
+          value={inputText}
+          onChange={(e) => setInputText(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
         />
-        <button type="button" onClick={handleAsk} disabled={loading}>
-          {loading ? "Waiting for the assistant..." : "Ask"}
+        <button type="button" onClick={handleSubmit} disabled={loading}>
+          {loading ? "Waiting for the assistant..." : "Submit"}
         </button>
       </div>
 
       {error && <div className="error-box">{error}</div>}
 
       <div className="result">
-        <label htmlFor="answer-box">Answer</label>
-        <textarea id="answer-box" readOnly rows={6} value={answer} />
+        <label htmlFor="result-box">{MODES[mode].resultLabel}</label>
+        <textarea id="result-box" readOnly rows={6} value={result} />
 
         <div className="metrics">
           <div className="metric-box">
