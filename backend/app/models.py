@@ -1,8 +1,19 @@
+from dataclasses import dataclass
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
 class AskRequest(BaseModel):
     question: str
+
+
+class SummarizeRequest(BaseModel):
+    text: str
+
+
+class AnalyzeSentimentRequest(BaseModel):
+    text: str
 
 
 class Source(BaseModel):
@@ -11,20 +22,50 @@ class Source(BaseModel):
 
 
 class Answer(BaseModel):
-    text: str = Field(min_length = 1)
+    text: str = Field(min_length=1)
     sources: list[Source]
     confidence: float = Field(ge=0.0, le=1.0)
 
 
-class AskResponse(BaseModel):
-    answer: Answer
+class Summary(BaseModel):
+    text: str = Field(min_length=1)
+
+
+class Sentiment(BaseModel):
+    label: Literal["positive", "negative", "neutral"]
+    confidence: float = Field(ge=0.0, le=1.0)
+
+
+class LLMResponseMeta(BaseModel):
     tokens_used: int
     response_time_seconds: float
     ttft_seconds: float | None = None
 
 
+class AskResponse(LLMResponseMeta):
+    answer: Answer
+
+
+class SummarizeResponse(LLMResponseMeta):
+    summary: Summary
+
+
+class SentimentResponse(LLMResponseMeta):
+    sentiment: Sentiment
+
+
+@dataclass
+class LLMResult:
+    """Internal transport between the generic LLM engine and its per-endpoint callers."""
+
+    parsed: BaseModel
+    tokens_used: int
+    response_time_seconds: float
+    ttft_seconds: float | None
+
+
 class ResearchError(Exception):
-    """Base class for research-layer failures."""
+    """Base class for LLM-request failures."""
 
 
 class ResearchTimeoutError(ResearchError):
