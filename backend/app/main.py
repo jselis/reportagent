@@ -5,6 +5,7 @@ from app.config import settings
 from app.models import (
     AskRequest,
     AskResponse,
+    ResearchAPIError,
     ResearchConnectionError,
     ResearchTimeoutError,
 )
@@ -35,6 +36,8 @@ def ask(request: AskRequest) -> AskResponse:
             status_code=503,
             detail="The research service is currently unreachable. Please try again shortly.",
         )
+    except ResearchAPIError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message)
 
 
 if settings.debug:
@@ -48,3 +51,14 @@ if settings.debug:
     def set_force_connection_error(enabled: bool = True) -> dict:
         research._force_connection_error = enabled
         return {"force_connection_error": enabled}
+
+    @app.post("/api/debug/force-api-error")
+    def set_force_api_error(
+        enabled: bool = True,
+        status_code: int = 500,
+        message: str = "Simulated OpenAI error",
+    ) -> dict:
+        research._force_api_error = (
+            {"status_code": status_code, "message": message} if enabled else None
+        )
+        return {"force_api_error": research._force_api_error}

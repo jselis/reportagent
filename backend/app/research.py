@@ -4,7 +4,13 @@ import openai
 from openai import OpenAI
 
 from app.config import settings
-from app.models import Answer, AskResponse, ResearchConnectionError, ResearchTimeoutError
+from app.models import (
+    Answer,
+    AskResponse,
+    ResearchAPIError,
+    ResearchConnectionError,
+    ResearchTimeoutError,
+)
 
 MODEL = "gpt-5.6-terra"
 TIMEOUT_SECONDS = 15.0
@@ -15,6 +21,7 @@ client = OpenAI(api_key=settings.openai_api_key)
 # Only reachable when settings.debug is True.
 _force_timeout = False
 _force_connection_error = False
+_force_api_error: dict | None = None  # {"status_code": int, "message": str}
 
 
 def research_and_answer(question: str) -> AskResponse:
@@ -23,6 +30,8 @@ def research_and_answer(question: str) -> AskResponse:
         raise ResearchTimeoutError("Timeout forced for testing")
     if _force_connection_error:
         raise ResearchConnectionError("Connection error forced for testing")
+    if _force_api_error is not None:
+        raise ResearchAPIError(**_force_api_error)
 
     start = time.perf_counter()
     ttft = None
@@ -47,6 +56,8 @@ def research_and_answer(question: str) -> AskResponse:
         raise ResearchConnectionError(
             "Failed to establish a connection to OpenAI"
         ) from exc
+    except openai.APIStatusError as exc:
+        raise ResearchAPIError(status_code=exc.status_code, message=exc.message) from exc
 
     elapsed = time.perf_counter() - start
 

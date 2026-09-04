@@ -33,3 +33,12 @@ class ResearchTimeoutError(ResearchError):
 
 class ResearchConnectionError(ResearchError):
     """Raised when the OpenAI call fails to even establish a connection."""
+
+
+class ResearchAPIError(ResearchError):
+    """Raised when OpenAI responds with an HTTP error status (4xx/5xx)."""
+
+    def __init__(self, status_code: int, message: str):
+        self.status_code = status_code
+        self.message = message
+        super().__init__(f"OpenAI returned {status_code}: {message}")
