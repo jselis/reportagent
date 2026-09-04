@@ -11,9 +11,19 @@ TIMEOUT_SECONDS = 15.0
 
 client = OpenAI(api_key=settings.openai_api_key)
 
+# Debug-only fault injection flags, toggled via /api/debug/* endpoints (see main.py).
+# Only reachable when settings.debug is True.
+_force_timeout = False
+_force_connection_error = False
+
 
 def research_and_answer(question: str) -> AskResponse:
     """Ask the model to research the question via web search and answer it."""
+    if _force_timeout:
+        raise ResearchTimeoutError("Timeout forced for testing")
+    if _force_connection_error:
+        raise ResearchConnectionError("Connection error forced for testing")
+
     start = time.perf_counter()
     ttft = None
 

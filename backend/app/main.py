@@ -1,5 +1,7 @@
 from fastapi import FastAPI, HTTPException
 
+from app import research
+from app.config import settings
 from app.models import (
     AskRequest,
     AskResponse,
@@ -33,3 +35,16 @@ def ask(request: AskRequest) -> AskResponse:
             status_code=503,
             detail="The research service is currently unreachable. Please try again shortly.",
         )
+
+
+if settings.debug:
+
+    @app.post("/api/debug/force-timeout")
+    def set_force_timeout(enabled: bool = True) -> dict:
+        research._force_timeout = enabled
+        return {"force_timeout": enabled}
+
+    @app.post("/api/debug/force-connection-error")
+    def set_force_connection_error(enabled: bool = True) -> dict:
+        research._force_connection_error = enabled
+        return {"force_connection_error": enabled}
