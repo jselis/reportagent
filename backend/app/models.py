@@ -19,3 +19,4 @@ class AskResponse(BaseModel):
     answer: Answer
     tokens_used: int
     response_time_seconds: float
+    ttft_seconds: float | None = None
