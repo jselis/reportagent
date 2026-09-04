@@ -10,6 +10,12 @@ class Source(BaseModel):
     url: str | None = None
 
 
-class AskResponse(BaseModel):
-    answer: str
+class Answer(BaseModel):
+    text: str
     sources: list[Source]
+
+
+class AskResponse(BaseModel):
+    answer: Answer
+    tokens_used: int
+    response_time_seconds: float
