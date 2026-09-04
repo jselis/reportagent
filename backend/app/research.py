@@ -1,17 +1,18 @@
 from openai import OpenAI
 
 from app.config import settings
+from app.models import AskResponse, Source
 
 MODEL = "gpt-5.6-terra"
 
 client = OpenAI(api_key=settings.openai_api_key)
 
 
-def research_and_answer(question: str) -> dict:
+def research_and_answer(question: str) -> AskResponse:
     """Ask the model to research the question via web search and answer it."""
     response = client.responses.create(
         model=MODEL,
-        tools=[{"type": "web_search_preview"}],
+        #tools=[{"type": "web_search_preview"}],
         input=question,
     )
 
@@ -23,10 +24,7 @@ def research_and_answer(question: str) -> dict:
             for annotation in getattr(content, "annotations", []) or []:
                 if annotation.type == "url_citation":
                     sources.append(
-                        {"title": annotation.title, "url": annotation.url}
+                        Source(title=annotation.title, url=annotation.url)
                     )
 
-    return {
-        "answer": response.output_text,
-        "sources": sources,
-    }
+    return AskResponse(answer=response.output_text, sources=sources)
