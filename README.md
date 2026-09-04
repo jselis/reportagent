@@ -37,6 +37,7 @@ This project builds an **agentic RAG (Retrieval-Augmented Generation) system** t
 ## Running with Docker
 
 ```bash
+cp .env.example .env                   # sets BACKEND_PORT
 cp backend/.env.example backend/.env   # then set OPENAI_API_KEY
 docker compose up --build
 ```
