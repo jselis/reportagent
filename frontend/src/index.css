@@ -33,4 +33,61 @@ body {
   background: #333;
   color: white;
   cursor: pointer;
+  white-space: nowrap;
+}
+
+.ask-bar button:disabled {
+  background: #999;
+  cursor: not-allowed;
+}
+
+.error-box {
+  margin-top: 1.5rem;
+  padding: 0.8rem 1rem;
+  border-radius: 6px;
+  background: #fdecea;
+  color: #611a15;
+  text-align: left;
+}
+
+.result {
+  margin-top: 1.5rem;
+  text-align: left;
+}
+
+.result label {
+  display: block;
+  font-size: 0.85rem;
+  color: #555;
+  margin-bottom: 0.3rem;
+}
+
+.result textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.6rem 0.8rem;
+  font-size: 1rem;
+  font-family: inherit;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  resize: vertical;
+}
+
+.metrics {
+  display: flex;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.metric-box {
+  flex: 1;
+}
+
+.metric-box input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.6rem 0.8rem;
+  font-size: 1rem;
+  border: 1px solid #ccc;
+  border-radius: 6px;
 }
