@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class AskRequest(BaseModel):
@@ -11,8 +11,9 @@ class Source(BaseModel):
 
 
 class Answer(BaseModel):
-    text: str
+    text: str = Field(min_length = 1)
     sources: list[Source]
+    confidence: float = Field(ge=0.0, le=1.0)
 
 
 class AskResponse(BaseModel):
