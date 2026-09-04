@@ -133,7 +133,7 @@ function App() {
               id="ttft-box"
               type="text"
               readOnly
-              value={ttft !== null ? ttft.toFixed(3) : ""}
+              value={ttft !== null ? ttft.toFixed(1) : ""}
             />
           </div>
           <div className="metric-box">
@@ -142,7 +142,7 @@ function App() {
               id="total-time-box"
               type="text"
               readOnly
-              value={responseTime !== null ? responseTime.toFixed(3) : ""}
+              value={responseTime !== null ? responseTime.toFixed(1) : ""}
             />
           </div>
         </div>
