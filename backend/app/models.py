@@ -21,3 +21,15 @@ class AskResponse(BaseModel):
     tokens_used: int
     response_time_seconds: float
     ttft_seconds: float | None = None
+
+
+class ResearchError(Exception):
+    """Base class for research-layer failures."""
+
+
+class ResearchTimeoutError(ResearchError):
+    """Raised when the OpenAI call doesn't complete within the allowed time."""
+
+
+class ResearchConnectionError(ResearchError):
+    """Raised when the OpenAI call fails to even establish a connection."""
