@@ -31,7 +31,11 @@ services:
       - "traefik.http.services.backend.loadbalancer.server.port=${BACKEND_PORT}"
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      target: dev
+    environment:
+      - VITE_API_BASE_URL=${VITE_API_BASE_URL}
     volumes:
       - ./frontend/src:/code/src
       - ./frontend/index.html:/code/index.html

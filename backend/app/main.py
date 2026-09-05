@@ -1,6 +1,7 @@
 from typing import Callable, TypeVar
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
 from app import llm
 from app.config import settings
@@ -24,6 +25,13 @@ app = FastAPI(
     docs_url="/api/docs",
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.allowed_origins_list,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 T = TypeVar("T")

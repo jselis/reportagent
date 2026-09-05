@@ -29,9 +29,9 @@ This project builds an **agentic RAG (Retrieval-Augmented Generation) system** t
  └──────────────────┘      └────────────────────┘
 ```
 
-- **traefik** — reverse proxy / router. Routes `/` to the frontend and `/api/*` to the backend, passing the full path through unchanged. Dashboard at `localhost:8080`.
-- **backend** — the FastAPI app from before (`/api/ask` endpoint), now living in [backend/app](backend/app).
-- **frontend** — a React (Vite) scaffold in [frontend/src](frontend/src). Currently just a text input + button, not yet wired to the backend.
+- **traefik** — reverse proxy / router. Routes `/` to the frontend and `/api/*` to the backend, passing the full path through unchanged. Dashboard at `localhost:8080`. Local-only — not used in cloud deploys (see below).
+- **backend** — FastAPI app in [backend/app](backend/app), exposing `/api/ask`, `/api/summarize`, and `/api/analyze-sentiment`, all backed by a shared LLM engine ([backend/app/llm.py](backend/app/llm.py)).
+- **frontend** — a React (Vite) app in [frontend/src](frontend/src) with a mode selector (Ask / Summarize / Analyze Sentiment) wired to the corresponding backend endpoint.
 - A database + database-manager service will be added later.
 
 ## Running with Docker
@@ -58,6 +58,20 @@ curl -X POST http://localhost/api/ask \
   -H "Content-Type: application/json" \
   -d '{"question": "What are the latest developments in agentic RAG?"}'
 ```
+
+## Deploying to Railway / Render
+
+Neither platform runs `docker-compose.yml` as one unit — each service (`backend`, `frontend`) is deployed independently with its own public domain, so there's no shared Traefik here. Instead:
+
+- **backend** — deploy from `backend/Dockerfile` (root directory `backend/`). It already reads `PORT` from the environment (both platforms inject this automatically). Set these environment variables in the platform's dashboard:
+  - `OPENAI_API_KEY`
+  - `DEBUG=false` (never leave this `true` in a public deployment — it exposes fault-injection endpoints)
+  - `ALLOWED_ORIGINS` — the frontend's public URL once you know it (comma-separated if more than one)
+- **frontend** — deploy from `frontend/Dockerfile`, targeting the `prod` stage (build + serve static files), not `dev`. Set:
+  - `VITE_API_BASE_URL` — the backend's public URL, **available at build time** (Vite bakes it into the static bundle; setting it only at runtime has no effect since the JS is already built)
+  - `PORT` — usually auto-injected by the platform; the container binds to whatever it's given
+
+Both env vars default to values that preserve local behavior (`ALLOWED_ORIGINS=http://localhost`, `VITE_API_BASE_URL=` empty → relative paths through Traefik) — they only need to change for a real deployment.
 
 ## Running without Docker
 

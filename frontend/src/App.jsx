@@ -1,5 +1,7 @@
 import { useState } from "react";
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
+
 const MODES = {
   ask: {
     label: "Ask",
@@ -62,7 +64,7 @@ function App() {
     setResponseTime(null);
 
     try {
-      const res = await fetch(url, {
+      const res = await fetch(`${API_BASE_URL}${url}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ [field]: inputText }),
