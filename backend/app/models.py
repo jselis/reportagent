@@ -36,9 +36,13 @@ class Sentiment(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
 
 
+class IngestRequest(BaseModel):
+    document_id: str
+    text: str
+
+
 class RetrievedChunk(BaseModel):
     doc_id: str
-    filename: str
     chunk_index: int
     text: str
     score: float
