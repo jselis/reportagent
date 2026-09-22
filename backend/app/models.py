@@ -36,6 +36,14 @@ class Sentiment(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
 
 
+class RetrievedChunk(BaseModel):
+    doc_id: str
+    filename: str
+    chunk_index: int
+    text: str
+    score: float
+
+
 class LLMResponseMeta(BaseModel):
     tokens_used: int
     response_time_seconds: float

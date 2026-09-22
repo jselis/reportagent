@@ -5,6 +5,8 @@ class Settings(BaseSettings):
     openai_api_key: str
     debug: bool = False
     allowed_origins: str  # comma-separated list of origins allowed to call this API
+    pinecone_api_key: str
+    pinecone_index_name: str
 
     class Config:
         env_file = ".env"
