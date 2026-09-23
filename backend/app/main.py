@@ -9,6 +9,8 @@ from app.models import (
     AnalyzeSentimentRequest,
     AskRequest,
     AskResponse,
+    IngestRequest,
+    IngestResponse,
     ResearchAPIError,
     ResearchConnectionError,
     ResearchTimeoutError,
@@ -16,6 +18,7 @@ from app.models import (
     SummarizeRequest,
     SummarizeResponse,
 )
+from app.rag import ingest_document
 from app.research import research_and_answer
 from app.sentiment import analyze_sentiment
 from app.summarize import summarize_text
@@ -80,6 +83,17 @@ def analyze_sentiment_endpoint(request: AnalyzeSentimentRequest) -> SentimentRes
         raise HTTPException(status_code=400, detail="text must not be empty")
 
     return _run_or_raise_http(analyze_sentiment, request.text)
+
+
+@app.post("/api/ingest", response_model=IngestResponse)
+def ingest(request: IngestRequest) -> IngestResponse:
+    if not request.document_id.strip():
+        raise HTTPException(status_code=400, detail="document_id must not be empty")
+    if not request.text.strip():
+        raise HTTPException(status_code=400, detail="text must not be empty")
+
+    chunks_ingested = ingest_document(request)
+    return IngestResponse(document_id=request.document_id, chunks_ingested=chunks_ingested)
 
 
 if settings.debug:

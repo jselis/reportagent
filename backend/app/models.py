@@ -48,6 +48,11 @@ class RetrievedChunk(BaseModel):
     score: float
 
 
+class IngestResponse(BaseModel):
+    document_id: str
+    chunks_ingested: int
+
+
 class LLMResponseMeta(BaseModel):
     tokens_used: int
     response_time_seconds: float
