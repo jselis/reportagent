@@ -14,11 +14,12 @@ from app.models import (
     ResearchAPIError,
     ResearchConnectionError,
     ResearchTimeoutError,
+    RetrievedChunk,
     SentimentResponse,
     SummarizeRequest,
     SummarizeResponse,
 )
-from app.rag import ingest_document
+from app.rag import ingest_document, retrieve
 from app.research import research_and_answer
 from app.sentiment import analyze_sentiment
 from app.summarize import summarize_text
@@ -118,3 +119,10 @@ if settings.debug:
             {"status_code": status_code, "message": message} if enabled else None
         )
         return {"force_api_error": llm._force_api_error}
+
+    @app.get("/api/debug/retrieve", response_model=list[RetrievedChunk])
+    def debug_retrieve(q: str, top_k: int = 5) -> list[RetrievedChunk]:
+        if not q.strip():
+            raise HTTPException(status_code=400, detail="q must not be empty")
+
+        return retrieve(q, top_k=top_k)
