@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
@@ -16,15 +16,42 @@ class AnalyzeSentimentRequest(BaseModel):
     text: str
 
 
-class Source(BaseModel):
+class DocumentSource(BaseModel):
+    type: Literal["document"] = "document"
+    document_id: str
+    chunk_id: int
+    snippet: str
+
+
+class WebSource(BaseModel):
+    type: Literal["web"] = "web"
     title: str | None = None
-    url: str | None = None
+    url: str
+    snippet: str | None = None
+
+
+Source = Annotated[DocumentSource | WebSource, Field(discriminator="type")]
 
 
 class Answer(BaseModel):
     text: str = Field(min_length=1)
     sources: list[Source]
     confidence: float = Field(ge=0.0, le=1.0)
+
+
+class Citation(BaseModel):
+    """What the LLM returns per used chunk: a reference number and a verbatim quote."""
+
+    chunk_ref: int
+    quote: str
+
+
+class GroundedAnswer(BaseModel):
+    """The LLM-facing output schema. The server turns citations into real Source objects."""
+
+    text: str = Field(min_length=1)
+    confidence: float = Field(ge=0.0, le=1.0)
+    citations: list[Citation]
 
 
 class Summary(BaseModel):
@@ -42,8 +69,8 @@ class IngestRequest(BaseModel):
 
 
 class RetrievedChunk(BaseModel):
-    doc_id: str
-    chunk_index: int
+    document_id: str
+    chunk_id: int
     text: str
     score: float
 

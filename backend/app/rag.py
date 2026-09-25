@@ -64,8 +64,8 @@ def retrieve(query: str, top_k: int = 5) -> list[RetrievedChunk]:
 
     return [
         RetrievedChunk(
-            doc_id=match.metadata["doc_id"],
-            chunk_index=match.metadata["chunk_index"],
+            document_id=match.metadata["doc_id"],
+            chunk_id=match.metadata["chunk_index"],
             text=match.metadata["text"],
             score=match.score,
         )
