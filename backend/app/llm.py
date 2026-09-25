@@ -74,4 +74,5 @@ def run_llm_request(
         tokens_used=response.usage.total_tokens,
         response_time_seconds=elapsed,
         ttft_seconds=ttft,
+        raw_output=response.output_text if settings.debug else None,
     )

@@ -86,6 +86,7 @@ class LLMResponseMeta(BaseModel):
     tokens_used: int
     response_time_seconds: float
     ttft_seconds: float | None = None
+    raw_llm_output: str | None = None  # debug only: the model's output exactly as returned
 
 
 class AskResponse(LLMResponseMeta):
@@ -108,6 +109,7 @@ class LLMResult:
     tokens_used: int
     response_time_seconds: float
     ttft_seconds: float | None
+    raw_output: str | None = None
 
 
 class ResearchError(Exception):

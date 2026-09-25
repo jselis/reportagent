@@ -12,4 +12,5 @@ def summarize_text(text: str) -> SummarizeResponse:
         tokens_used=result.tokens_used,
         response_time_seconds=result.response_time_seconds,
         ttft_seconds=result.ttft_seconds,
+        raw_llm_output=result.raw_output,
     )
