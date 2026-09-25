@@ -18,6 +18,7 @@ class AnalyzeSentimentRequest(BaseModel):
 
 class DocumentSource(BaseModel):
     type: Literal["document"] = "document"
+    id: str  # globally unique: the chunk's id in the Pinecone index (document_id-chunk_id)
     document_id: str
     chunk_id: int
     snippet: str
@@ -40,9 +41,9 @@ class Answer(BaseModel):
 
 
 class Citation(BaseModel):
-    """What the LLM returns per used chunk: a reference number and a verbatim quote."""
+    """What the LLM returns per used chunk: the chunk's index id and a verbatim quote."""
 
-    chunk_ref: int
+    source_id: str
     quote: str
 
 
@@ -69,6 +70,7 @@ class IngestRequest(BaseModel):
 
 
 class RetrievedChunk(BaseModel):
+    id: str  # the chunk's id in the Pinecone index (document_id-chunk_id)
     document_id: str
     chunk_id: int
     text: str
