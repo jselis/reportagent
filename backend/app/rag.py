@@ -43,6 +43,7 @@ def ingest_document(request: IngestRequest) -> int:
                 "doc_id": request.document_id,
                 "chunk_index": i,
                 "text": chunk,
+                "topic": request.topic,
             },
         }
         for i, (chunk, embedding) in enumerate(zip(chunks, embeddings))
@@ -69,6 +70,7 @@ def retrieve(query: str, top_k: int = 5) -> list[RetrievedChunk]:
             chunk_id=match.metadata["chunk_index"],
             text=match.metadata["text"],
             score=match.score,
+            topic=match.metadata.get("topic"),
         )
         for match in results.matches
     ]

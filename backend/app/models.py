@@ -67,6 +67,7 @@ class Sentiment(BaseModel):
 class IngestRequest(BaseModel):
     document_id: str
     text: str
+    topic: str
 
 
 class RetrievedChunk(BaseModel):
@@ -75,6 +76,7 @@ class RetrievedChunk(BaseModel):
     chunk_id: int
     text: str
     score: float
+    topic: str | None = None  # None for chunks ingested before this field existed
 
 
 class IngestResponse(BaseModel):
