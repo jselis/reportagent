@@ -53,14 +53,16 @@ def ingest_document(request: IngestRequest) -> int:
     return len(vectors)
 
 
-def retrieve(query: str, top_k: int = 5) -> list[RetrievedChunk]:
-    """Embed the query and return the top-k most similar chunks from Pinecone."""
+def retrieve(query: str, top_k: int = 5, topic: str | None = None) -> list[RetrievedChunk]:
+    """Embed the query and return the top-k most similar chunks from Pinecone,
+    optionally restricted to chunks whose stored topic matches exactly."""
     query_embedding = _embed([query])[0]
 
     results = index.query(
         vector=query_embedding,
         top_k=top_k,
         include_metadata=True,
+        filter={"topic": {"$eq": topic}} if topic else None,
     )
 
     return [

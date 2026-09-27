@@ -121,8 +121,8 @@ if settings.debug:
         return {"force_api_error": llm._force_api_error}
 
     @app.get("/api/debug/retrieve", response_model=list[RetrievedChunk])
-    def debug_retrieve(q: str, top_k: int = 5) -> list[RetrievedChunk]:
+    def debug_retrieve(q: str, top_k: int = 5, topic: str | None = None) -> list[RetrievedChunk]:
         if not q.strip():
             raise HTTPException(status_code=400, detail="q must not be empty")
 
-        return retrieve(q, top_k=top_k)
+        return retrieve(q, top_k=top_k, topic=topic)
