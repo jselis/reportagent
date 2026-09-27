@@ -107,16 +107,26 @@ body {
 
 .sources-list {
   margin: 0.8rem 0 0;
-  padding: 0.7rem 0 0 1.4rem;
+  padding: 0.7rem 0 0 0;
   border-top: 1px solid #ddd;
   font-size: 0.8rem;
   line-height: 1.5;
   color: #444;
+  list-style: none;
+  counter-reset: source;
 }
 
 .sources-list li {
+  counter-increment: source;
   margin-bottom: 0.4rem;
-  padding-left: 0.3rem;
+  padding-left: 1.6rem;
+  text-indent: -1.6rem;
+}
+
+.sources-list li::before {
+  content: "[" counter(source) "] ";
+  font-weight: 600;
+  color: #222;
 }
 
 .source-id {
