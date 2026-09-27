@@ -40,6 +40,7 @@ function App() {
   const [inputText, setInputText] = useState("");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState("");
+  const [sources, setSources] = useState([]);
   const [ttft, setTtft] = useState(null);
   const [responseTime, setResponseTime] = useState(null);
   const [error, setError] = useState(null);
@@ -47,6 +48,7 @@ function App() {
   const handleModeChange = (newMode) => {
     setMode(newMode);
     setResult("");
+    setSources([]);
     setTtft(null);
     setResponseTime(null);
     setError(null);
@@ -60,6 +62,7 @@ function App() {
     setLoading(true);
     setError(null);
     setResult("");
+    setSources([]);
     setTtft(null);
     setResponseTime(null);
 
@@ -78,6 +81,7 @@ function App() {
       }
 
       setResult(formatResult(mode, data));
+      setSources(mode === "ask" ? data.answer.sources : []);
       setTtft(data.ttft_seconds);
       setResponseTime(data.response_time_seconds);
     } catch (err) {
@@ -127,6 +131,30 @@ function App() {
       <div className="result">
         <label htmlFor="result-box">{MODES[mode].resultLabel}</label>
         <textarea id="result-box" readOnly rows={6} value={result} />
+
+        {sources.length > 0 && (
+          <ol className="sources-list">
+            {sources.map((source, i) => (
+              <li key={i}>
+                {source.type === "web" ? (
+                  <>
+                    <a href={source.url} target="_blank" rel="noreferrer">
+                      {source.title || source.url}
+                    </a>
+                    {source.snippet && <span className="source-snippet"> — {source.snippet}</span>}
+                  </>
+                ) : (
+                  <>
+                    <span className="source-id">
+                      {source.document_id} (chunk {source.chunk_id})
+                    </span>
+                    <span className="source-snippet"> — {source.snippet}</span>
+                  </>
+                )}
+              </li>
+            ))}
+          </ol>
+        )}
 
         <div className="metrics">
           <div className="metric-box">

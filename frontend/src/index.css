@@ -105,6 +105,30 @@ body {
   resize: vertical;
 }
 
+.sources-list {
+  margin: 0.8rem 0 0;
+  padding: 0.7rem 0 0 1.4rem;
+  border-top: 1px solid #ddd;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: #444;
+}
+
+.sources-list li {
+  margin-bottom: 0.4rem;
+  padding-left: 0.3rem;
+}
+
+.source-id {
+  font-variant: small-caps;
+  color: #222;
+}
+
+.source-snippet {
+  font-style: italic;
+  color: #666;
+}
+
 .metrics {
   display: flex;
   gap: 1rem;
