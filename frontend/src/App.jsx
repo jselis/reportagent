@@ -35,7 +35,7 @@ function formatResult(mode, data) {
   return "";
 }
 
-function App() {
+function QueryScreen() {
   const [mode, setMode] = useState("ask");
   const [inputText, setInputText] = useState("");
   const [loading, setLoading] = useState(false);
@@ -92,9 +92,7 @@ function App() {
   };
 
   return (
-    <div className="app">
-      <h1>reportagent</h1>
-
+    <>
       <div className="mode-selector">
         {Object.entries(MODES).map(([value, { label }]) => (
           <label
@@ -177,6 +175,132 @@ function App() {
           </div>
         </div>
       </div>
+    </>
+  );
+}
+
+function IngestScreen() {
+  const [documentId, setDocumentId] = useState("");
+  const [topic, setTopic] = useState("");
+  const [text, setText] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [successMessage, setSuccessMessage] = useState(null);
+  const [fileError, setFileError] = useState(null);
+
+  const handleFileChange = (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-selecting the same file later
+    if (!file) return;
+
+    setFileError(null);
+    const reader = new FileReader();
+    reader.onload = () => setText(reader.result);
+    reader.onerror = () => setFileError(`Could not read "${file.name}".`);
+    reader.readAsText(file);
+  };
+
+  const handleSubmit = async () => {
+    if (!documentId.trim() || !topic.trim() || !text.trim() || loading) return;
+
+    setLoading(true);
+    setError(null);
+    setSuccessMessage(null);
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/ingest`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ document_id: documentId, topic, text }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setError(data.detail || `Request failed (HTTP ${res.status})`);
+        return;
+      }
+
+      setSuccessMessage(
+        `Ingested "${data.document_id}" as ${data.chunks_ingested} chunk${data.chunks_ingested === 1 ? "" : "s"}.`
+      );
+    } catch (err) {
+      setError("Could not reach the backend. Is it running?");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="ingest-form">
+      <label htmlFor="ingest-document-id">Document ID</label>
+      <input
+        id="ingest-document-id"
+        type="text"
+        placeholder="e.g. policy-handbook-2026"
+        value={documentId}
+        onChange={(e) => setDocumentId(e.target.value)}
+      />
+
+      <label htmlFor="ingest-topic">Topic</label>
+      <input
+        id="ingest-topic"
+        type="text"
+        placeholder="e.g. hr-policies"
+        value={topic}
+        onChange={(e) => setTopic(e.target.value)}
+      />
+
+      <label htmlFor="ingest-text">Text</label>
+      <textarea
+        id="ingest-text"
+        rows={10}
+        placeholder="Paste the document text here, or upload a .txt file below..."
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+      />
+
+      <div className="file-upload">
+        <label htmlFor="ingest-file">Or upload a text file:</label>
+        <input id="ingest-file" type="file" accept=".txt,text/plain" onChange={handleFileChange} />
+      </div>
+      {fileError && <div className="error-box">{fileError}</div>}
+
+      <button type="button" onClick={handleSubmit} disabled={loading}>
+        {loading ? "Ingesting..." : "Ingest"}
+      </button>
+
+      {error && <div className="error-box">{error}</div>}
+      {successMessage && <div className="success-box">{successMessage}</div>}
+    </div>
+  );
+}
+
+function App() {
+  const [screen, setScreen] = useState("query");
+
+  return (
+    <div className="app">
+      <h1>reportagent</h1>
+
+      <div className="screen-selector">
+        <button
+          type="button"
+          className={screen === "query" ? "active" : ""}
+          onClick={() => setScreen("query")}
+        >
+          Query
+        </button>
+        <button
+          type="button"
+          className={screen === "ingest" ? "active" : ""}
+          onClick={() => setScreen("ingest")}
+        >
+          Ingest Document
+        </button>
+      </div>
+
+      {screen === "query" ? <QueryScreen /> : <IngestScreen />}
     </div>
   );
 }

@@ -11,6 +11,94 @@ body {
   text-align: center;
 }
 
+.screen-selector {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: center;
+  margin-top: 1.5rem;
+  border-bottom: 1px solid #ccc;
+  padding-bottom: 1rem;
+}
+
+.screen-selector button {
+  padding: 0.5rem 1.2rem;
+  font-size: 0.9rem;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background: white;
+  color: #333;
+  cursor: pointer;
+}
+
+.screen-selector button.active {
+  background: #333;
+  color: white;
+  border-color: #333;
+}
+
+.ingest-form {
+  margin-top: 1.5rem;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.ingest-form label {
+  font-size: 0.85rem;
+  color: #555;
+  margin-top: 0.6rem;
+}
+
+.ingest-form input[type="text"],
+.ingest-form textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.6rem 0.8rem;
+  font-size: 1rem;
+  font-family: inherit;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  resize: vertical;
+}
+
+.file-upload {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.2rem;
+}
+
+.file-upload label {
+  margin: 0;
+  white-space: nowrap;
+}
+
+.ingest-form button {
+  margin-top: 1rem;
+  align-self: flex-start;
+  padding: 0.6rem 1.2rem;
+  font-size: 1rem;
+  border: none;
+  border-radius: 6px;
+  background: #333;
+  color: white;
+  cursor: pointer;
+}
+
+.ingest-form button:disabled {
+  background: #999;
+  cursor: not-allowed;
+}
+
+.success-box {
+  margin-top: 1rem;
+  padding: 0.8rem 1rem;
+  border-radius: 6px;
+  background: #e6f4ea;
+  color: #1e4620;
+}
+
 .mode-selector {
   display: flex;
   gap: 0.5rem;
