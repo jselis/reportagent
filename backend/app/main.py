@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app import llm
 from app.config import settings
 from app.documents import extract_pdf_text
+from app.metadata import sync_pending_metadata, upsert_document_metadata
 from app.models import (
     AnalyzeSentimentRequest,
     AskRequest,
@@ -20,6 +21,7 @@ from app.models import (
     SentimentResponse,
     SummarizeRequest,
     SummarizeResponse,
+    SyncMetadataResponse,
 )
 from app.rag import ingest_document, retrieve
 from app.research import research_and_answer
@@ -96,7 +98,14 @@ def ingest(request: IngestRequest) -> IngestResponse:
         raise HTTPException(status_code=400, detail="text must not be empty")
 
     chunks_ingested = ingest_document(request)
+    upsert_document_metadata(request.document_id, request.topic)
     return IngestResponse(document_id=request.document_id, chunks_ingested=chunks_ingested)
+
+
+@app.post("/api/sync-metadata", response_model=SyncMetadataResponse)
+def sync_metadata() -> SyncMetadataResponse:
+    synced, failed = sync_pending_metadata()
+    return SyncMetadataResponse(synced=synced, failed=failed)
 
 
 @app.post("/api/extract-text", response_model=ExtractTextResponse)
