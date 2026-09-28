@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app import llm
 from app.config import settings
 from app.documents import extract_pdf_text
+from app.evaluation import run_evaluation
 from app.ground_truth import create_ground_truth_case
 from app.metadata import sync_pending_metadata, upsert_document_metadata
 from app.models import (
@@ -21,6 +22,7 @@ from app.models import (
     ResearchConnectionError,
     ResearchTimeoutError,
     RetrievedChunk,
+    RunEvaluationResponse,
     SentimentResponse,
     SummarizeRequest,
     SummarizeResponse,
@@ -129,6 +131,12 @@ def create_ground_truth(request: CreateGroundTruthRequest) -> GroundTruthCaseRes
         raise HTTPException(status_code=400, detail="select at least one chunk")
 
     return create_ground_truth_case(request)
+
+
+@app.post("/api/evaluate", response_model=RunEvaluationResponse)
+def evaluate() -> RunEvaluationResponse:
+    evaluated, failed = run_evaluation()
+    return RunEvaluationResponse(evaluated=evaluated, failed=failed)
 
 
 @app.post("/api/extract-text", response_model=ExtractTextResponse)

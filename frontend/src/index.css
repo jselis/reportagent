@@ -181,6 +181,12 @@ body {
   margin: 0 0 1rem;
 }
 
+.admin-divider {
+  border: none;
+  border-top: 1px solid #ddd;
+  margin: 1.5rem 0;
+}
+
 .admin-panel button {
   padding: 0.6rem 1.2rem;
   font-size: 1rem;

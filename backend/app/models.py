@@ -79,6 +79,11 @@ class SyncMetadataResponse(BaseModel):
     failed: list[str]
 
 
+class RunEvaluationResponse(BaseModel):
+    evaluated: list[int]
+    failed: list[int]
+
+
 class ExpectedChunk(BaseModel):
     chunk_id: str
     chunk: str

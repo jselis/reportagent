@@ -564,31 +564,59 @@ function IngestScreen() {
 }
 
 function AdminScreen() {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [result, setResult] = useState(null);
+  const [syncLoading, setSyncLoading] = useState(false);
+  const [syncError, setSyncError] = useState(null);
+  const [syncResult, setSyncResult] = useState(null);
+
+  const [evalLoading, setEvalLoading] = useState(false);
+  const [evalError, setEvalError] = useState(null);
+  const [evalResult, setEvalResult] = useState(null);
 
   const handleSync = async () => {
-    if (loading) return;
+    if (syncLoading) return;
 
-    setLoading(true);
-    setError(null);
-    setResult(null);
+    setSyncLoading(true);
+    setSyncError(null);
+    setSyncResult(null);
 
     try {
       const res = await fetch(`${API_BASE_URL}/api/sync-metadata`, { method: "POST" });
       const data = await res.json();
 
       if (!res.ok) {
-        setError(data.detail || `Request failed (HTTP ${res.status})`);
+        setSyncError(data.detail || `Request failed (HTTP ${res.status})`);
         return;
       }
 
-      setResult(data);
+      setSyncResult(data);
     } catch (err) {
-      setError("Could not reach the backend. Is it running?");
+      setSyncError("Could not reach the backend. Is it running?");
     } finally {
-      setLoading(false);
+      setSyncLoading(false);
+    }
+  };
+
+  const handleEvaluate = async () => {
+    if (evalLoading) return;
+
+    setEvalLoading(true);
+    setEvalError(null);
+    setEvalResult(null);
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/evaluate`, { method: "POST" });
+      const data = await res.json();
+
+      if (!res.ok) {
+        setEvalError(data.detail || `Request failed (HTTP ${res.status})`);
+        return;
+      }
+
+      setEvalResult(data);
+    } catch (err) {
+      setEvalError("Could not reach the backend. Is it running?");
+    } finally {
+      setEvalLoading(false);
     }
   };
 
@@ -599,21 +627,48 @@ function AdminScreen() {
         those changes to every chunk of the affected documents in Pinecone.
       </p>
 
-      <button type="button" onClick={handleSync} disabled={loading}>
-        {loading ? "Syncing..." : "Sync Metadata"}
+      <button type="button" onClick={handleSync} disabled={syncLoading}>
+        {syncLoading ? "Syncing..." : "Sync Metadata"}
       </button>
 
-      {error && <div className="error-box">{error}</div>}
+      {syncError && <div className="error-box">{syncError}</div>}
 
-      {result && (
+      {syncResult && (
         <div className="sync-result">
           <p>
-            <strong>Synced ({result.synced.length}):</strong>{" "}
-            {result.synced.length > 0 ? result.synced.join(", ") : "nothing pending"}
+            <strong>Synced ({syncResult.synced.length}):</strong>{" "}
+            {syncResult.synced.length > 0 ? syncResult.synced.join(", ") : "nothing pending"}
           </p>
-          {result.failed.length > 0 && (
+          {syncResult.failed.length > 0 && (
             <p className="sync-failed">
-              <strong>Failed ({result.failed.length}):</strong> {result.failed.join(", ")}
+              <strong>Failed ({syncResult.failed.length}):</strong> {syncResult.failed.join(", ")}
+            </p>
+          )}
+        </div>
+      )}
+
+      <hr className="admin-divider" />
+
+      <p className="admin-description">
+        Re-run every ground truth case's question through the current retrieval + answer
+        pipeline, storing the result for comparison against the curated expected answer/chunks.
+      </p>
+
+      <button type="button" onClick={handleEvaluate} disabled={evalLoading}>
+        {evalLoading ? "Running evaluation..." : "Run Evaluation"}
+      </button>
+
+      {evalError && <div className="error-box">{evalError}</div>}
+
+      {evalResult && (
+        <div className="sync-result">
+          <p>
+            <strong>Evaluated ({evalResult.evaluated.length}):</strong>{" "}
+            {evalResult.evaluated.length > 0 ? evalResult.evaluated.join(", ") : "no cases found"}
+          </p>
+          {evalResult.failed.length > 0 && (
+            <p className="sync-failed">
+              <strong>Failed ({evalResult.failed.length}):</strong> {evalResult.failed.join(", ")}
             </p>
           )}
         </div>
