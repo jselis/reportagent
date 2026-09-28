@@ -79,17 +79,22 @@ class SyncMetadataResponse(BaseModel):
     failed: list[str]
 
 
+class ExpectedChunk(BaseModel):
+    chunk_id: str
+    chunk: str
+
+
 class CreateGroundTruthRequest(BaseModel):
     question: str
     expected_answer: str
-    expected_document_ids: list[str]
+    expected_chunks: list[ExpectedChunk]
 
 
 class GroundTruthCaseResponse(BaseModel):
     id: int
     question: str
     expected_answer: str
-    expected_document_ids: list[str]
+    expected_chunks: list[ExpectedChunk]
 
 
 class RetrievedChunk(BaseModel):

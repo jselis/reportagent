@@ -138,9 +138,9 @@ function QueryScreen() {
     setGtError(null);
     setGtSavedId(null);
 
-    const expectedDocumentIds = [
-      ...new Set(chunks.filter((c) => selectedChunkIds.has(c.id)).map((c) => c.document_id)),
-    ];
+    const expectedChunks = chunks
+      .filter((c) => selectedChunkIds.has(c.id))
+      .map((c) => ({ chunk_id: c.id, chunk: c.text }));
 
     try {
       const res = await fetch(`${API_BASE_URL}/api/ground-truth`, {
@@ -149,7 +149,7 @@ function QueryScreen() {
         body: JSON.stringify({
           question: inputText,
           expected_answer: gtAnswer,
-          expected_document_ids: expectedDocumentIds,
+          expected_chunks: expectedChunks,
         }),
       });
 

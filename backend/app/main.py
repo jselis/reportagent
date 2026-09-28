@@ -125,7 +125,7 @@ def create_ground_truth(request: CreateGroundTruthRequest) -> GroundTruthCaseRes
         raise HTTPException(status_code=400, detail="question must not be empty")
     if not request.expected_answer.strip():
         raise HTTPException(status_code=400, detail="expected_answer must not be empty")
-    if not request.expected_document_ids:
+    if not request.expected_chunks:
         raise HTTPException(status_code=400, detail="select at least one chunk")
 
     return create_ground_truth_case(request)
