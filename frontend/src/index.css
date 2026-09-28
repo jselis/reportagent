@@ -148,6 +148,119 @@ body {
   color: #611a15;
 }
 
+.top-n-selector {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+  font-size: 0.85rem;
+  color: #555;
+}
+
+.top-n-selector input {
+  width: 4rem;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+.chunk-browser {
+  margin-top: 1.5rem;
+  text-align: left;
+}
+
+.chunk-browser > label {
+  display: block;
+  font-size: 0.85rem;
+  color: #555;
+  margin-bottom: 0.5rem;
+}
+
+.chunk-list {
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+}
+
+.chunk-list li {
+  border-bottom: 1px solid #eee;
+}
+
+.chunk-list li:last-child {
+  border-bottom: none;
+}
+
+.chunk-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.2rem 0.6rem;
+  padding: 0.5rem 0.7rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.chunk-item input {
+  grid-row: span 2;
+  margin-top: 0.2rem;
+}
+
+.chunk-meta {
+  font-variant: small-caps;
+  color: #222;
+  font-weight: 600;
+}
+
+.chunk-text {
+  color: #555;
+  grid-column: 2;
+}
+
+.gt-form {
+  border-top: 1px solid #ddd;
+  padding-top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.gt-form label {
+  font-size: 0.85rem;
+  color: #555;
+}
+
+.gt-form textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.6rem 0.8rem;
+  font-size: 1rem;
+  font-family: inherit;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  resize: vertical;
+}
+
+.gt-form button {
+  align-self: flex-start;
+  margin-top: 0.3rem;
+  padding: 0.6rem 1.2rem;
+  font-size: 1rem;
+  border: none;
+  border-radius: 6px;
+  background: #333;
+  color: white;
+  cursor: pointer;
+}
+
+.gt-form button:disabled {
+  background: #999;
+  cursor: not-allowed;
+}
+
 .mode-selector {
   display: flex;
   gap: 0.5rem;

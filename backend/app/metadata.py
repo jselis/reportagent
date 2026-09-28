@@ -1,16 +1,10 @@
-import psycopg2
-
-from app.config import settings
+from app.db import get_connection
 from app.rag import index
-
-
-def _connect():
-    return psycopg2.connect(settings.supabase_db_url)
 
 
 def upsert_document_metadata(document_id: str, topic: str) -> None:
     """Record (or update) a document's metadata, marking it as in sync with Pinecone."""
-    conn = _connect()
+    conn = get_connection()
     try:
         with conn, conn.cursor() as cur:
             cur.execute(
@@ -29,7 +23,7 @@ def upsert_document_metadata(document_id: str, topic: str) -> None:
 def sync_pending_metadata() -> tuple[list[str], list[str]]:
     """Push metadata changes made directly in the database to every chunk of the
     affected documents in Pinecone. Returns (synced, failed) document ids."""
-    conn = _connect()
+    conn = get_connection()
     try:
         with conn.cursor() as cur:
             cur.execute(

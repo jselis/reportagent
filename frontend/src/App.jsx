@@ -45,6 +45,22 @@ function QueryScreen() {
   const [responseTime, setResponseTime] = useState(null);
   const [error, setError] = useState(null);
 
+  const [topN, setTopN] = useState(20);
+  const [chunks, setChunks] = useState([]);
+  const [selectedChunkIds, setSelectedChunkIds] = useState(new Set());
+  const [gtAnswer, setGtAnswer] = useState("");
+  const [gtSaving, setGtSaving] = useState(false);
+  const [gtError, setGtError] = useState(null);
+  const [gtSavedId, setGtSavedId] = useState(null);
+
+  const resetChunkBrowser = () => {
+    setChunks([]);
+    setSelectedChunkIds(new Set());
+    setGtAnswer("");
+    setGtError(null);
+    setGtSavedId(null);
+  };
+
   const handleModeChange = (newMode) => {
     setMode(newMode);
     setResult("");
@@ -52,6 +68,7 @@ function QueryScreen() {
     setTtft(null);
     setResponseTime(null);
     setError(null);
+    resetChunkBrowser();
   };
 
   const handleSubmit = async () => {
@@ -65,14 +82,21 @@ function QueryScreen() {
     setSources([]);
     setTtft(null);
     setResponseTime(null);
+    resetChunkBrowser();
 
     try {
-      const res = await fetch(`${API_BASE_URL}${url}`, {
+      const askPromise = fetch(`${API_BASE_URL}${url}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ [field]: inputText }),
       });
 
+      const chunksPromise =
+        mode === "ask"
+          ? fetch(`${API_BASE_URL}/api/retrieve?${new URLSearchParams({ q: inputText, top_n: topN })}`)
+          : null;
+
+      const res = await askPromise;
       const data = await res.json();
 
       if (!res.ok) {
@@ -84,10 +108,63 @@ function QueryScreen() {
       setSources(mode === "ask" ? data.answer.sources : []);
       setTtft(data.ttft_seconds);
       setResponseTime(data.response_time_seconds);
+      if (mode === "ask") setGtAnswer(data.answer.text);
+
+      if (chunksPromise) {
+        const chunksRes = await chunksPromise;
+        const chunksData = await chunksRes.json();
+        if (chunksRes.ok) setChunks(chunksData);
+      }
     } catch (err) {
       setError("Could not reach the backend. Is it running?");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const toggleChunkSelected = (chunkId) => {
+    setSelectedChunkIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(chunkId)) next.delete(chunkId);
+      else next.add(chunkId);
+      return next;
+    });
+  };
+
+  const handleSaveGroundTruth = async () => {
+    if (selectedChunkIds.size === 0 || !gtAnswer.trim() || gtSaving) return;
+
+    setGtSaving(true);
+    setGtError(null);
+    setGtSavedId(null);
+
+    const expectedDocumentIds = [
+      ...new Set(chunks.filter((c) => selectedChunkIds.has(c.id)).map((c) => c.document_id)),
+    ];
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/ground-truth`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question: inputText,
+          expected_answer: gtAnswer,
+          expected_document_ids: expectedDocumentIds,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setGtError(data.detail || `Request failed (HTTP ${res.status})`);
+        return;
+      }
+
+      setGtSavedId(data.id);
+    } catch (err) {
+      setGtError("Could not reach the backend. Is it running?");
+    } finally {
+      setGtSaving(false);
     }
   };
 
@@ -123,6 +200,21 @@ function QueryScreen() {
           {loading ? "Waiting for the assistant..." : "Submit"}
         </button>
       </div>
+
+      {mode === "ask" && (
+        <div className="top-n-selector">
+          <label htmlFor="top-n-input">Show top</label>
+          <input
+            id="top-n-input"
+            type="number"
+            min="1"
+            max="100"
+            value={topN}
+            onChange={(e) => setTopN(Number(e.target.value))}
+          />
+          <label htmlFor="top-n-input">chunks (answer still uses top 5)</label>
+        </div>
+      )}
 
       {error && <div className="error-box">{error}</div>}
 
@@ -175,6 +267,49 @@ function QueryScreen() {
           </div>
         </div>
       </div>
+
+      {mode === "ask" && chunks.length > 0 && (
+        <div className="chunk-browser">
+          <label>Retrieved chunks ({chunks.length}) — select the ones that support the answer</label>
+          <ul className="chunk-list">
+            {chunks.map((chunk) => (
+              <li key={chunk.id}>
+                <label className="chunk-item">
+                  <input
+                    type="checkbox"
+                    checked={selectedChunkIds.has(chunk.id)}
+                    onChange={() => toggleChunkSelected(chunk.id)}
+                  />
+                  <span className="chunk-meta">
+                    {chunk.id} (score {chunk.score.toFixed(2)}
+                    {chunk.topic ? `, ${chunk.topic}` : ""})
+                  </span>
+                  <span className="chunk-text">{chunk.text}</span>
+                </label>
+              </li>
+            ))}
+          </ul>
+
+          {selectedChunkIds.size > 0 && (
+            <div className="gt-form">
+              <label htmlFor="gt-answer">Expected answer for this ground truth case</label>
+              <textarea
+                id="gt-answer"
+                rows={4}
+                value={gtAnswer}
+                onChange={(e) => setGtAnswer(e.target.value)}
+              />
+              <button type="button" onClick={handleSaveGroundTruth} disabled={gtSaving}>
+                {gtSaving ? "Saving..." : "Save Ground Truth Case"}
+              </button>
+              {gtError && <div className="error-box">{gtError}</div>}
+              {gtSavedId !== null && (
+                <div className="success-box">Saved as ground truth case #{gtSavedId}.</div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </>
   );
 }

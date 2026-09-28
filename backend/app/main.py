@@ -6,12 +6,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from app import llm
 from app.config import settings
 from app.documents import extract_pdf_text
+from app.ground_truth import create_ground_truth_case
 from app.metadata import sync_pending_metadata, upsert_document_metadata
 from app.models import (
     AnalyzeSentimentRequest,
     AskRequest,
     AskResponse,
+    CreateGroundTruthRequest,
     ExtractTextResponse,
+    GroundTruthCaseResponse,
     IngestRequest,
     IngestResponse,
     ResearchAPIError,
@@ -108,6 +111,26 @@ def sync_metadata() -> SyncMetadataResponse:
     return SyncMetadataResponse(synced=synced, failed=failed)
 
 
+@app.get("/api/retrieve", response_model=list[RetrievedChunk])
+def retrieve_chunks(q: str, top_n: int = 20, topic: str | None = None) -> list[RetrievedChunk]:
+    if not q.strip():
+        raise HTTPException(status_code=400, detail="q must not be empty")
+
+    return retrieve(q, top_k=top_n, topic=topic)
+
+
+@app.post("/api/ground-truth", response_model=GroundTruthCaseResponse)
+def create_ground_truth(request: CreateGroundTruthRequest) -> GroundTruthCaseResponse:
+    if not request.question.strip():
+        raise HTTPException(status_code=400, detail="question must not be empty")
+    if not request.expected_answer.strip():
+        raise HTTPException(status_code=400, detail="expected_answer must not be empty")
+    if not request.expected_document_ids:
+        raise HTTPException(status_code=400, detail="select at least one chunk")
+
+    return create_ground_truth_case(request)
+
+
 @app.post("/api/extract-text", response_model=ExtractTextResponse)
 async def extract_text(file: UploadFile = File(...)) -> ExtractTextResponse:
     if file.content_type != "application/pdf" and not file.filename.lower().endswith(".pdf"):
@@ -144,10 +167,3 @@ if settings.debug:
             {"status_code": status_code, "message": message} if enabled else None
         )
         return {"force_api_error": llm._force_api_error}
-
-    @app.get("/api/debug/retrieve", response_model=list[RetrievedChunk])
-    def debug_retrieve(q: str, top_k: int = 5, topic: str | None = None) -> list[RetrievedChunk]:
-        if not q.strip():
-            raise HTTPException(status_code=400, detail="q must not be empty")
-
-        return retrieve(q, top_k=top_k, topic=topic)

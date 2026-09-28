@@ -79,6 +79,19 @@ class SyncMetadataResponse(BaseModel):
     failed: list[str]
 
 
+class CreateGroundTruthRequest(BaseModel):
+    question: str
+    expected_answer: str
+    expected_document_ids: list[str]
+
+
+class GroundTruthCaseResponse(BaseModel):
+    id: int
+    question: str
+    expected_answer: str
+    expected_document_ids: list[str]
+
+
 class RetrievedChunk(BaseModel):
     id: str  # the chunk's id in the Pinecone index (document_id-chunk_id)
     document_id: str
