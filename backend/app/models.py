@@ -70,6 +70,10 @@ class IngestRequest(BaseModel):
     topic: str
 
 
+class ExtractTextResponse(BaseModel):
+    text: str
+
+
 class RetrievedChunk(BaseModel):
     id: str  # the chunk's id in the Pinecone index (document_id-chunk_id)
     document_id: str

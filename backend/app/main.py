@@ -1,14 +1,16 @@
 from typing import Callable, TypeVar
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import llm
 from app.config import settings
+from app.documents import extract_pdf_text
 from app.models import (
     AnalyzeSentimentRequest,
     AskRequest,
     AskResponse,
+    ExtractTextResponse,
     IngestRequest,
     IngestResponse,
     ResearchAPIError,
@@ -95,6 +97,20 @@ def ingest(request: IngestRequest) -> IngestResponse:
 
     chunks_ingested = ingest_document(request)
     return IngestResponse(document_id=request.document_id, chunks_ingested=chunks_ingested)
+
+
+@app.post("/api/extract-text", response_model=ExtractTextResponse)
+async def extract_text(file: UploadFile = File(...)) -> ExtractTextResponse:
+    if file.content_type != "application/pdf" and not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+
+    file_bytes = await file.read()
+    try:
+        text = extract_pdf_text(file_bytes)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Could not read this PDF file")
+
+    return ExtractTextResponse(text=text)
 
 
 if settings.debug:

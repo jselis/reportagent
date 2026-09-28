@@ -4,3 +4,5 @@ openai
 pydantic-settings
 pinecone
 langchain-text-splitters
+pypdf
+python-multipart

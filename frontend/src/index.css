@@ -74,6 +74,12 @@ body {
   margin-top: 0.2rem;
 }
 
+.extracting-label {
+  font-size: 0.85rem;
+  color: #555;
+  font-style: italic;
+}
+
 .file-upload label {
   margin: 0;
   white-space: nowrap;

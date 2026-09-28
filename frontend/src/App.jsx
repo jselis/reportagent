@@ -187,21 +187,51 @@ function IngestScreen() {
   const [error, setError] = useState(null);
   const [successMessage, setSuccessMessage] = useState(null);
   const [fileError, setFileError] = useState(null);
+  const [extracting, setExtracting] = useState(false);
 
-  const handleFileChange = (e) => {
+  const handleFileChange = async (e) => {
     const file = e.target.files?.[0];
     e.target.value = ""; // allow re-selecting the same file later
     if (!file) return;
 
     setFileError(null);
-    const reader = new FileReader();
-    reader.onload = () => setText(reader.result);
-    reader.onerror = () => setFileError(`Could not read "${file.name}".`);
-    reader.readAsText(file);
+
+    const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+    if (!isPdf) {
+      const reader = new FileReader();
+      reader.onload = () => setText(reader.result);
+      reader.onerror = () => setFileError(`Could not read "${file.name}".`);
+      reader.readAsText(file);
+      return;
+    }
+
+    setExtracting(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const res = await fetch(`${API_BASE_URL}/api/extract-text`, {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setFileError(data.detail || `Could not extract text from "${file.name}".`);
+        return;
+      }
+
+      setText(data.text);
+    } catch (err) {
+      setFileError("Could not reach the backend. Is it running?");
+    } finally {
+      setExtracting(false);
+    }
   };
 
   const handleSubmit = async () => {
-    if (!documentId.trim() || !topic.trim() || !text.trim() || loading) return;
+    if (!documentId.trim() || !topic.trim() || !text.trim() || loading || extracting) return;
 
     setLoading(true);
     setError(null);
@@ -255,18 +285,25 @@ function IngestScreen() {
       <textarea
         id="ingest-text"
         rows={10}
-        placeholder="Paste the document text here, or upload a .txt file below..."
+        placeholder="Paste the document text here, or upload a .txt or .pdf file below..."
         value={text}
         onChange={(e) => setText(e.target.value)}
       />
 
       <div className="file-upload">
-        <label htmlFor="ingest-file">Or upload a text file:</label>
-        <input id="ingest-file" type="file" accept=".txt,text/plain" onChange={handleFileChange} />
+        <label htmlFor="ingest-file">Or upload a .txt or .pdf file:</label>
+        <input
+          id="ingest-file"
+          type="file"
+          accept=".txt,text/plain,.pdf,application/pdf"
+          onChange={handleFileChange}
+          disabled={extracting}
+        />
+        {extracting && <span className="extracting-label">Extracting text...</span>}
       </div>
       {fileError && <div className="error-box">{fileError}</div>}
 
-      <button type="button" onClick={handleSubmit} disabled={loading}>
+      <button type="button" onClick={handleSubmit} disabled={loading || extracting}>
         {loading ? "Ingesting..." : "Ingest"}
       </button>
 
