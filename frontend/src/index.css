@@ -69,8 +69,9 @@ body {
 
 .file-upload {
   display: flex;
-  align-items: center;
-  gap: 0.6rem;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.6rem;
   margin-top: 0.2rem;
 }
 
@@ -82,7 +83,66 @@ body {
 
 .file-upload label {
   margin: 0;
+  flex-basis: 100%;
+}
+
+.file-upload input {
+  flex-basis: auto;
+}
+
+.batch-results {
+  margin-top: 1rem;
+  text-align: left;
+}
+
+.batch-results > label {
+  display: block;
+  font-size: 0.85rem;
+  color: #555;
+  margin-bottom: 0.4rem;
+}
+
+.batch-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 0.85rem;
+}
+
+.batch-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.4rem 0.7rem;
+  border-bottom: 1px solid #eee;
+}
+
+.batch-item:last-child {
+  border-bottom: none;
+}
+
+.batch-name {
+  color: #333;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.batch-status {
+  white-space: nowrap;
+  color: #777;
+}
+
+.batch-item.batch-done .batch-status {
+  color: #1e4620;
+}
+
+.batch-item.batch-error .batch-status {
+  color: #611a15;
 }
 
 .ingest-form button {

@@ -323,6 +323,83 @@ function IngestScreen() {
   const [successMessage, setSuccessMessage] = useState(null);
   const [fileError, setFileError] = useState(null);
   const [extracting, setExtracting] = useState(false);
+  const [batchResults, setBatchResults] = useState([]);
+  const [batchRunning, setBatchRunning] = useState(false);
+
+  const extractFileText = async (file) => {
+    const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+    if (!isPdf) return file.text();
+
+    const formData = new FormData();
+    formData.append("file", file);
+    const res = await fetch(`${API_BASE_URL}/api/extract-text`, { method: "POST", body: formData });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || `Could not extract text from "${file.name}"`);
+    return data.text;
+  };
+
+  const handleFolderChange = async (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = ""; // allow re-selecting the same folder later
+    if (files.length === 0) return;
+
+    if (!topic.trim()) {
+      setError("Set a Topic before selecting a folder to batch-ingest.");
+      return;
+    }
+
+    const qualifying = files.filter((f) => /\.(txt|pdf)$/i.test(f.name));
+    if (qualifying.length === 0) {
+      setError("No .txt or .pdf files found in that folder.");
+      return;
+    }
+
+    setError(null);
+    setSuccessMessage(null);
+    setBatchRunning(true);
+    setBatchResults(
+      qualifying.map((f) => ({
+        name: f.webkitRelativePath || f.name,
+        status: "pending",
+      }))
+    );
+
+    for (let i = 0; i < qualifying.length; i++) {
+      const file = qualifying[i];
+      const relPath = file.webkitRelativePath || file.name;
+      const documentId = relPath.replace(/\.(txt|pdf)$/i, "");
+
+      setBatchResults((prev) =>
+        prev.map((r, idx) => (idx === i ? { ...r, status: "processing" } : r))
+      );
+
+      try {
+        const fileText = await extractFileText(file);
+
+        const res = await fetch(`${API_BASE_URL}/api/ingest`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ document_id: documentId, topic, text: fileText }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Ingest failed");
+
+        setBatchResults((prev) =>
+          prev.map((r, idx) =>
+            idx === i
+              ? { ...r, status: "done", message: `${data.chunks_ingested} chunk${data.chunks_ingested === 1 ? "" : "s"}` }
+              : r
+          )
+        );
+      } catch (err) {
+        setBatchResults((prev) =>
+          prev.map((r, idx) => (idx === i ? { ...r, status: "error", message: err.message } : r))
+        );
+      }
+    }
+
+    setBatchRunning(false);
+  };
 
   const handleFileChange = async (e) => {
     const file = e.target.files?.[0];
@@ -436,14 +513,52 @@ function IngestScreen() {
         />
         {extracting && <span className="extracting-label">Extracting text...</span>}
       </div>
+
+      <div className="file-upload">
+        <label htmlFor="ingest-folder">
+          Or select a folder to batch-ingest every .txt/.pdf file in it (using the Topic above,
+          document IDs taken from filenames):
+        </label>
+        <input
+          id="ingest-folder"
+          type="file"
+          webkitdirectory=""
+          directory=""
+          multiple
+          onChange={handleFolderChange}
+          disabled={extracting || batchRunning}
+        />
+      </div>
       {fileError && <div className="error-box">{fileError}</div>}
 
-      <button type="button" onClick={handleSubmit} disabled={loading || extracting}>
+      <button type="button" onClick={handleSubmit} disabled={loading || extracting || batchRunning}>
         {loading ? "Ingesting..." : "Ingest"}
       </button>
 
       {error && <div className="error-box">{error}</div>}
       {successMessage && <div className="success-box">{successMessage}</div>}
+
+      {batchResults.length > 0 && (
+        <div className="batch-results">
+          <label>
+            Batch ingest — {batchResults.filter((r) => r.status === "done").length}/
+            {batchResults.length} done
+          </label>
+          <ul className="batch-list">
+            {batchResults.map((r, i) => (
+              <li key={i} className={`batch-item batch-${r.status}`}>
+                <span className="batch-name">{r.name}</span>
+                <span className="batch-status">
+                  {r.status === "pending" && "Waiting..."}
+                  {r.status === "processing" && "Processing..."}
+                  {r.status === "done" && `✓ ${r.message}`}
+                  {r.status === "error" && `✗ ${r.message}`}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
