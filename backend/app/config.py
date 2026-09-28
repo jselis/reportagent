@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     allowed_origins: str  # comma-separated list of origins allowed to call this API
     pinecone_api_key: str
     pinecone_index_name: str
+    supabase_db_url: str
 
     class Config:
         env_file = ".env"

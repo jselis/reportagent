@@ -6,3 +6,4 @@ pinecone
 langchain-text-splitters
 pypdf
 python-multipart
+psycopg2-binary
