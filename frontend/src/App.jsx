@@ -568,9 +568,10 @@ function AdminScreen() {
   const [syncError, setSyncError] = useState(null);
   const [syncResult, setSyncResult] = useState(null);
 
-  const [evalLoading, setEvalLoading] = useState(false);
+  const [evalPhase, setEvalPhase] = useState("idle"); // idle | generating | scoring | done
+  const [evalProgress, setEvalProgress] = useState({ total: 0, done: 0, failed: 0 });
   const [evalError, setEvalError] = useState(null);
-  const [evalResult, setEvalResult] = useState(null);
+  const [evalSummary, setEvalSummary] = useState(null);
 
   const handleSync = async () => {
     if (syncLoading) return;
@@ -596,29 +597,56 @@ function AdminScreen() {
     }
   };
 
-  const handleEvaluate = async () => {
-    if (evalLoading) return;
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-    setEvalLoading(true);
-    setEvalError(null);
-    setEvalResult(null);
+  const startJob = async (url) => {
+    const res = await fetch(`${API_BASE_URL}${url}`, { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || `Request failed (HTTP ${res.status})`);
+    if (!data.started) throw new Error("That step is already running elsewhere. Try again shortly.");
+  };
 
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/evaluate`, { method: "POST" });
+  const pollJobUntilDone = async (url) => {
+    while (true) {
+      const res = await fetch(`${API_BASE_URL}${url}`);
       const data = await res.json();
-
-      if (!res.ok) {
-        setEvalError(data.detail || `Request failed (HTTP ${res.status})`);
-        return;
-      }
-
-      setEvalResult(data);
-    } catch (err) {
-      setEvalError("Could not reach the backend. Is it running?");
-    } finally {
-      setEvalLoading(false);
+      if (!res.ok) throw new Error(data.detail || `Request failed (HTTP ${res.status})`);
+      setEvalProgress(data);
+      if (data.status === "done") return;
+      await sleep(1000);
     }
   };
+
+  const handleRunEvaluation = async () => {
+    if (evalPhase === "generating" || evalPhase === "scoring") return;
+
+    setEvalError(null);
+    setEvalSummary(null);
+
+    try {
+      setEvalPhase("generating");
+      setEvalProgress({ total: 0, done: 0, failed: 0 });
+      await startJob("/api/evaluation/generate");
+      await pollJobUntilDone("/api/evaluation/generate/status");
+
+      setEvalPhase("scoring");
+      setEvalProgress({ total: 0, done: 0, failed: 0 });
+      await startJob("/api/evaluation/score");
+      await pollJobUntilDone("/api/evaluation/score/status");
+
+      const summaryRes = await fetch(`${API_BASE_URL}/api/evaluation/summary`);
+      const summaryData = await summaryRes.json();
+      if (!summaryRes.ok) throw new Error(summaryData.detail || "Could not fetch summary");
+
+      setEvalSummary(summaryData);
+      setEvalPhase("done");
+    } catch (err) {
+      setEvalError(err.message || "Could not reach the backend. Is it running?");
+      setEvalPhase("idle");
+    }
+  };
+
+  const formatMetric = (value) => (value === null || value === undefined ? "n/a" : value.toFixed(2));
 
   return (
     <div className="admin-panel">
@@ -651,26 +679,43 @@ function AdminScreen() {
 
       <p className="admin-description">
         Re-run every ground truth case's question through the current retrieval + answer
-        pipeline, storing the result for comparison against the curated expected answer/chunks.
+        pipeline, then score faithfulness, correctness, and retrieval recall/precision/F1
+        against the curated expected answer/chunks.
       </p>
 
-      <button type="button" onClick={handleEvaluate} disabled={evalLoading}>
-        {evalLoading ? "Running evaluation..." : "Run Evaluation"}
+      <button
+        type="button"
+        onClick={handleRunEvaluation}
+        disabled={evalPhase === "generating" || evalPhase === "scoring"}
+      >
+        {evalPhase === "generating" || evalPhase === "scoring" ? "Running..." : "Run Evaluation"}
       </button>
+
+      {(evalPhase === "generating" || evalPhase === "scoring") && (
+        <div className="sync-result">
+          <p>
+            {evalPhase === "generating" ? "Generating answers" : "Scoring"}: {evalProgress.done}/
+            {evalProgress.total}
+            {evalProgress.failed > 0 && ` (${evalProgress.failed} failed)`}
+          </p>
+        </div>
+      )}
 
       {evalError && <div className="error-box">{evalError}</div>}
 
-      {evalResult && (
+      {evalPhase === "done" && evalSummary && (
         <div className="sync-result">
           <p>
-            <strong>Evaluated ({evalResult.evaluated.length}):</strong>{" "}
-            {evalResult.evaluated.length > 0 ? evalResult.evaluated.join(", ") : "no cases found"}
+            <strong>{evalSummary.case_count}</strong> case{evalSummary.case_count === 1 ? "" : "s"}{" "}
+            evaluated
           </p>
-          {evalResult.failed.length > 0 && (
-            <p className="sync-failed">
-              <strong>Failed ({evalResult.failed.length}):</strong> {evalResult.failed.join(", ")}
-            </p>
-          )}
+          <ul className="eval-summary-list">
+            <li>Faithfulness: {formatMetric(evalSummary.avg_faithfulness)}</li>
+            <li>Correctness: {formatMetric(evalSummary.avg_correctness)}</li>
+            <li>Retrieval recall: {formatMetric(evalSummary.avg_retrieval_recall)}</li>
+            <li>Retrieval precision: {formatMetric(evalSummary.avg_retrieval_precision)}</li>
+            <li>Retrieval F1: {formatMetric(evalSummary.avg_retrieval_f1)}</li>
+          </ul>
         </div>
       )}
     </div>

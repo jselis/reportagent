@@ -6,23 +6,26 @@ from fastapi.middleware.cors import CORSMiddleware
 from app import llm
 from app.config import settings
 from app.documents import extract_pdf_text
-from app.evaluation import run_evaluation
+from app.evaluation import get_evaluation_summary, run_generation, run_scoring
 from app.ground_truth import create_ground_truth_case
+from app.jobs import Job
 from app.metadata import sync_pending_metadata, upsert_document_metadata
 from app.models import (
     AnalyzeSentimentRequest,
     AskRequest,
     AskResponse,
     CreateGroundTruthRequest,
+    EvaluationSummaryResponse,
     ExtractTextResponse,
     GroundTruthCaseResponse,
     IngestRequest,
     IngestResponse,
+    JobStartResponse,
+    JobStatusResponse,
     ResearchAPIError,
     ResearchConnectionError,
     ResearchTimeoutError,
     RetrievedChunk,
-    RunEvaluationResponse,
     SentimentResponse,
     SummarizeRequest,
     SummarizeResponse,
@@ -133,10 +136,33 @@ def create_ground_truth(request: CreateGroundTruthRequest) -> GroundTruthCaseRes
     return create_ground_truth_case(request)
 
 
-@app.post("/api/evaluate", response_model=RunEvaluationResponse)
-def evaluate() -> RunEvaluationResponse:
-    evaluated, failed = run_evaluation()
-    return RunEvaluationResponse(evaluated=evaluated, failed=failed)
+_generation_job = Job()
+_scoring_job = Job()
+
+
+@app.post("/api/evaluation/generate", response_model=JobStartResponse)
+def start_generation() -> JobStartResponse:
+    return JobStartResponse(started=_generation_job.start(run_generation))
+
+
+@app.get("/api/evaluation/generate/status", response_model=JobStatusResponse)
+def generation_status() -> JobStatusResponse:
+    return JobStatusResponse(**_generation_job.snapshot())
+
+
+@app.post("/api/evaluation/score", response_model=JobStartResponse)
+def start_scoring() -> JobStartResponse:
+    return JobStartResponse(started=_scoring_job.start(run_scoring))
+
+
+@app.get("/api/evaluation/score/status", response_model=JobStatusResponse)
+def scoring_status() -> JobStatusResponse:
+    return JobStatusResponse(**_scoring_job.snapshot())
+
+
+@app.get("/api/evaluation/summary", response_model=EvaluationSummaryResponse)
+def evaluation_summary() -> EvaluationSummaryResponse:
+    return get_evaluation_summary()
 
 
 @app.post("/api/extract-text", response_model=ExtractTextResponse)

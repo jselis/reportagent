@@ -214,6 +214,15 @@ body {
   color: #611a15;
 }
 
+.eval-summary-list {
+  margin: 0.4rem 0 0;
+  padding-left: 1.2rem;
+}
+
+.eval-summary-list li {
+  margin-bottom: 0.2rem;
+}
+
 .top-n-selector {
   display: flex;
   align-items: center;

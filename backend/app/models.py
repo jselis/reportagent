@@ -79,9 +79,41 @@ class SyncMetadataResponse(BaseModel):
     failed: list[str]
 
 
-class RunEvaluationResponse(BaseModel):
-    evaluated: list[int]
-    failed: list[int]
+class FaithfulnessClaim(BaseModel):
+    claim: str
+    supported: bool
+
+
+class FaithfulnessJudgement(BaseModel):
+    """The LLM judge's output: the generated answer broken into atomic claims,
+    each marked as supported or not by the retrieved chunks. The faithfulness
+    score itself (supported / total) is computed server-side, not by the model."""
+
+    claims: list[FaithfulnessClaim]
+
+
+class CorrectnessJudgement(BaseModel):
+    score: Literal[0.0, 0.5, 1.0]
+
+
+class JobStartResponse(BaseModel):
+    started: bool
+
+
+class JobStatusResponse(BaseModel):
+    status: Literal["idle", "running", "done"]
+    total: int
+    done: int
+    failed: int
+
+
+class EvaluationSummaryResponse(BaseModel):
+    case_count: int
+    avg_faithfulness: float | None
+    avg_correctness: float | None
+    avg_retrieval_recall: float | None
+    avg_retrieval_precision: float | None
+    avg_retrieval_f1: float | None
 
 
 class ExpectedChunk(BaseModel):
