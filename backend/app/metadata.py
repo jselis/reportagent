@@ -35,7 +35,8 @@ def sync_pending_metadata() -> tuple[list[str], list[str]]:
             cur.execute(
                 """
                 SELECT document_id, topic FROM document_metadata
-                WHERE synced_at IS NULL OR updated_at > synced_at
+                WHERE sync_needed_at IS NOT NULL
+                  AND (synced_at IS NULL OR sync_needed_at > synced_at)
                 """
             )
             pending = cur.fetchall()
