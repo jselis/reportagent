@@ -313,6 +313,65 @@ function IngestScreen() {
   );
 }
 
+function AdminScreen() {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [result, setResult] = useState(null);
+
+  const handleSync = async () => {
+    if (loading) return;
+
+    setLoading(true);
+    setError(null);
+    setResult(null);
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/sync-metadata`, { method: "POST" });
+      const data = await res.json();
+
+      if (!res.ok) {
+        setError(data.detail || `Request failed (HTTP ${res.status})`);
+        return;
+      }
+
+      setResult(data);
+    } catch (err) {
+      setError("Could not reach the backend. Is it running?");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="admin-panel">
+      <p className="admin-description">
+        If you corrected a document's metadata directly in the database, use this to push
+        those changes to every chunk of the affected documents in Pinecone.
+      </p>
+
+      <button type="button" onClick={handleSync} disabled={loading}>
+        {loading ? "Syncing..." : "Sync Metadata"}
+      </button>
+
+      {error && <div className="error-box">{error}</div>}
+
+      {result && (
+        <div className="sync-result">
+          <p>
+            <strong>Synced ({result.synced.length}):</strong>{" "}
+            {result.synced.length > 0 ? result.synced.join(", ") : "nothing pending"}
+          </p>
+          {result.failed.length > 0 && (
+            <p className="sync-failed">
+              <strong>Failed ({result.failed.length}):</strong> {result.failed.join(", ")}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function App() {
   const [screen, setScreen] = useState("ingest");
 
@@ -335,9 +394,18 @@ function App() {
         >
           Query
         </button>
+        <button
+          type="button"
+          className={screen === "admin" ? "active" : ""}
+          onClick={() => setScreen("admin")}
+        >
+          Admin
+        </button>
       </div>
 
-      {screen === "query" ? <QueryScreen /> : <IngestScreen />}
+      {screen === "query" && <QueryScreen />}
+      {screen === "ingest" && <IngestScreen />}
+      {screen === "admin" && <AdminScreen />}
     </div>
   );
 }
