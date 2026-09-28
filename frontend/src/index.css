@@ -13,27 +13,32 @@ body {
 
 .screen-selector {
   display: flex;
-  gap: 0.5rem;
+  gap: 1.5rem;
   justify-content: center;
   margin-top: 1.5rem;
   border-bottom: 1px solid #ccc;
-  padding-bottom: 1rem;
 }
 
 .screen-selector button {
-  padding: 0.5rem 1.2rem;
-  font-size: 0.9rem;
-  border: 1px solid #ccc;
-  border-radius: 6px;
-  background: white;
-  color: #333;
+  padding: 0.6rem 0.2rem;
+  font-size: 0.95rem;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: none;
+  color: #777;
   cursor: pointer;
+  margin-bottom: -1px;
+}
+
+.screen-selector button:hover {
+  color: #333;
 }
 
 .screen-selector button.active {
-  background: #333;
-  color: white;
-  border-color: #333;
+  color: #111;
+  font-weight: 600;
+  border-bottom-color: #333;
 }
 
 .ingest-form {

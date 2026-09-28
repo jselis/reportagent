@@ -277,7 +277,7 @@ function IngestScreen() {
 }
 
 function App() {
-  const [screen, setScreen] = useState("query");
+  const [screen, setScreen] = useState("ingest");
 
   return (
     <div className="app">
@@ -286,17 +286,17 @@ function App() {
       <div className="screen-selector">
         <button
           type="button"
-          className={screen === "query" ? "active" : ""}
-          onClick={() => setScreen("query")}
-        >
-          Query
-        </button>
-        <button
-          type="button"
           className={screen === "ingest" ? "active" : ""}
           onClick={() => setScreen("ingest")}
         >
           Ingest Document
+        </button>
+        <button
+          type="button"
+          className={screen === "query" ? "active" : ""}
+          onClick={() => setScreen("query")}
+        >
+          Query
         </button>
       </div>
 
