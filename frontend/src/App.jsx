@@ -443,7 +443,20 @@ function IngestScreen() {
   };
 
   const handleSubmit = async () => {
-    if (!documentId.trim() || !topic.trim() || !text.trim() || loading || extracting) return;
+    if (loading || extracting) return;
+
+    if (!documentId.trim()) {
+      setError("Document ID must not be empty.");
+      return;
+    }
+    if (!topic.trim()) {
+      setError("Topic must not be empty.");
+      return;
+    }
+    if (!text.trim()) {
+      setError("Text must not be empty.");
+      return;
+    }
 
     setLoading(true);
     setError(null);
