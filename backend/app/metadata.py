@@ -1,4 +1,5 @@
 from app.db import get_connection
+from app.models import CorpusDocument
 from app.rag import index
 
 
@@ -55,3 +56,29 @@ def sync_pending_metadata() -> tuple[list[str], list[str]]:
         return synced, failed
     finally:
         conn.close()
+
+
+def list_corpus() -> list[CorpusDocument]:
+    """Return every ingested document with its topic and sync state, ordered by topic then name."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT document_id, topic, created_at, synced_at,
+                       (sync_needed_at IS NOT NULL
+                        AND (synced_at IS NULL OR sync_needed_at > synced_at)) AS sync_needed
+                FROM document_metadata
+                ORDER BY topic, document_id
+                """
+            )
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+    return [
+        CorpusDocument(
+            document_id=document_id, topic=topic, created_at=created_at,
+            synced_at=synced_at, sync_needed=sync_needed,
+        )
+        for document_id, topic, created_at, synced_at, sync_needed in rows
+    ]

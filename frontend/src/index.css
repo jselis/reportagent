@@ -482,3 +482,13 @@ body {
   border: 1px solid #ccc;
   border-radius: 6px;
 }
+
+.corpus-tree { text-align: left; }
+.corpus-tree details { margin-bottom: 12px; }
+.corpus-tree summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
+.corpus-count { font-weight: 400; opacity: 0.7; }
+.corpus-tree ul { list-style: none; margin: 4px 0 0; padding-left: 20px; }
+.corpus-tree li { display: flex; flex-direction: column; gap: 2px; padding: 6px 10px; margin-bottom: 4px; border-radius: 4px; }
+.corpus-tree li.sync-needed { background: #f59e0b; color: #1a1a1a; }
+.corpus-doc-id { word-break: break-all; }
+.corpus-dates { font-size: 0.85em; opacity: 0.8; }

@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
@@ -77,6 +78,18 @@ class ExtractTextResponse(BaseModel):
 class SyncMetadataResponse(BaseModel):
     synced: list[str]
     failed: list[str]
+
+
+class CorpusDocument(BaseModel):
+    document_id: str
+    topic: str
+    created_at: datetime
+    synced_at: datetime | None
+    sync_needed: bool
+
+
+class CorpusResponse(BaseModel):
+    documents: list[CorpusDocument]
 
 
 class FaithfulnessClaim(BaseModel):

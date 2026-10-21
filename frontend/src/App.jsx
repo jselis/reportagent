@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
 
@@ -576,6 +576,59 @@ function IngestScreen() {
   );
 }
 
+function formatDate(iso) {
+  return iso ? new Date(iso).toLocaleString() : "never";
+}
+
+function CorpusScreen() {
+  const [documents, setDocuments] = useState(null);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/corpus`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Failed to load corpus.");
+        setDocuments(data.documents);
+      } catch (err) {
+        setError(err.message);
+      }
+    };
+    load();
+  }, []);
+
+  if (error) return <div className="error-box">{error}</div>;
+  if (!documents) return <p>Loading…</p>;
+  if (documents.length === 0) return <p>No documents ingested yet.</p>;
+
+  const byTopic = {};
+  for (const doc of documents) (byTopic[doc.topic] ??= []).push(doc);
+
+  return (
+    <div className="corpus-tree">
+      {Object.entries(byTopic).map(([topic, docs]) => (
+        <details key={topic} open>
+          <summary>
+            {topic} <span className="corpus-count">({docs.length})</span>
+          </summary>
+          <ul>
+            {docs.map((doc) => (
+              <li key={doc.document_id} className={doc.sync_needed ? "sync-needed" : ""}>
+                <span className="corpus-doc-id">{doc.document_id}</span>
+                <span className="corpus-dates">
+                  created {formatDate(doc.created_at)} · last synced {formatDate(doc.synced_at)}
+                  {doc.sync_needed && " · sync needed"}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      ))}
+    </div>
+  );
+}
+
 function AdminScreen() {
   const [syncLoading, setSyncLoading] = useState(false);
   const [syncError, setSyncError] = useState(null);
@@ -752,6 +805,13 @@ function App() {
         </button>
         <button
           type="button"
+          className={screen === "corpus" ? "active" : ""}
+          onClick={() => setScreen("corpus")}
+        >
+          Corpus
+        </button>
+        <button
+          type="button"
           className={screen === "query" ? "active" : ""}
           onClick={() => setScreen("query")}
         >
@@ -768,6 +828,7 @@ function App() {
 
       {screen === "query" && <QueryScreen />}
       {screen === "ingest" && <IngestScreen />}
+      {screen === "corpus" && <CorpusScreen />}
       {screen === "admin" && <AdminScreen />}
     </div>
   );

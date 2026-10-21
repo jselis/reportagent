@@ -9,8 +9,9 @@ from app.documents import extract_pdf_text
 from app.evaluation import get_evaluation_summary, run_generation, run_scoring
 from app.ground_truth import create_ground_truth_case
 from app.jobs import Job
-from app.metadata import sync_pending_metadata, upsert_document_metadata
+from app.metadata import list_corpus, sync_pending_metadata, upsert_document_metadata
 from app.models import (
+    CorpusResponse,
     AnalyzeSentimentRequest,
     AskRequest,
     AskResponse,
@@ -114,6 +115,11 @@ def ingest(request: IngestRequest) -> IngestResponse:
 def sync_metadata() -> SyncMetadataResponse:
     synced, failed = sync_pending_metadata()
     return SyncMetadataResponse(synced=synced, failed=failed)
+
+
+@app.get("/api/corpus", response_model=CorpusResponse)
+def corpus() -> CorpusResponse:
+    return CorpusResponse(documents=list_corpus())
 
 
 @app.get("/api/retrieve", response_model=list[RetrievedChunk])
