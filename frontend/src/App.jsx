@@ -70,6 +70,166 @@ function InspectionMetrics({ ttft, responseTime }) {
   );
 }
 
+// Everything needed to turn a question, its expected answer and some chunks into a ground truth
+// case. Used by the Query and Agent tabs.
+function useGroundTruth() {
+  const [mode, setMode] = useState(false); // whether the inspection panel is used to work on ground truth
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [expectedAnswer, setExpectedAnswer] = useState("");
+  const [replacesId, setReplacesId] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+  const [savedId, setSavedId] = useState(null);
+  const [activeCases, setActiveCases] = useState([]);
+
+  const loadActiveCases = async () => {
+    try {
+      const data = await apiJson("/api/ground-truth");
+      setActiveCases(data.cases.filter((c) => c.superseded_at === null));
+    } catch (err) {
+      setActiveCases([]);
+    }
+  };
+
+  useEffect(() => {
+    loadActiveCases();
+  }, []);
+
+  const reset = (answer = "") => {
+    setMode(false);
+    setSelectedIds(new Set());
+    setExpectedAnswer(answer);
+    setReplacesId("");
+    setError(null);
+    setSavedId(null);
+  };
+
+  const toggleChunk = (chunkId) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(chunkId)) next.delete(chunkId);
+      else next.add(chunkId);
+      return next;
+    });
+  };
+
+  // chunks: every chunk on screen ({id, text, ...}); the selected ones become the expected chunks.
+  const save = async (question, chunks) => {
+    if (saving) return;
+
+    setError(null);
+    setSavedId(null);
+
+    if (!expectedAnswer.trim()) {
+      setError("Expected answer must not be empty.");
+      return;
+    }
+    if (selectedIds.size === 0) {
+      setError("Select at least one chunk that supports the answer.");
+      return;
+    }
+
+    setSaving(true);
+
+    const expectedChunks = chunks
+      .filter((c) => selectedIds.has(c.id))
+      .map((c) => ({ chunk_id: c.id, chunk: c.text }));
+
+    try {
+      const data = await apiJson("/api/ground-truth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question,
+          expected_answer: expectedAnswer,
+          expected_chunks: expectedChunks,
+          replaces_id: replacesId === "" ? null : Number(replacesId),
+        }),
+      });
+      setSavedId(data.id);
+      setReplacesId("");
+      loadActiveCases();
+    } catch (err) {
+      setError(err.message || "Could not reach the backend. Is it running?");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return {
+    mode, setMode, selectedIds, toggleChunk, expectedAnswer, setExpectedAnswer,
+    replacesId, setReplacesId, saving, error, savedId, activeCases, reset, save,
+  };
+}
+
+function GroundTruthToggle({ gt }) {
+  return (
+    <label className="gt-toggle">
+      <input type="checkbox" checked={gt.mode} onChange={(e) => gt.setMode(e.target.checked)} />
+      Work on ground truth
+    </label>
+  );
+}
+
+function GroundTruthForm({ gt, onSave }) {
+  return (
+    <div className="gt-form">
+      <label htmlFor="gt-replaces">Save as</label>
+      <select id="gt-replaces" value={gt.replacesId} onChange={(e) => gt.setReplacesId(e.target.value)}>
+        <option value="">New case</option>
+        {gt.activeCases.map((c) => (
+          <option key={c.id} value={c.id}>
+            Change #{c.id}: {c.question.length > 60 ? `${c.question.slice(0, 60)}…` : c.question}
+          </option>
+        ))}
+      </select>
+
+      <label htmlFor="gt-answer">Expected answer</label>
+      <textarea
+        id="gt-answer"
+        rows={4}
+        value={gt.expectedAnswer}
+        onChange={(e) => gt.setExpectedAnswer(e.target.value)}
+      />
+
+      <p className="gt-hint">
+        Select the retrieved chunks below that support the expected answer ({gt.selectedIds.size} selected).
+      </p>
+
+      <button type="button" onClick={onSave} disabled={gt.saving}>
+        {gt.saving ? "Saving..." : "Save Ground Truth Case"}
+      </button>
+      {gt.error && <div className="error-box">{gt.error}</div>}
+      {gt.savedId !== null && <div className="success-box">Saved as ground truth case #{gt.savedId}.</div>}
+    </div>
+  );
+}
+
+function ChunkList({ chunks, gt }) {
+  return (
+    <ul className="chunk-list">
+      {chunks.map((chunk) => (
+        <li key={chunk.id}>
+          <label className={`chunk-item ${gt.mode ? "" : "chunk-item-plain"}`}>
+            {gt.mode && (
+              <input
+                type="checkbox"
+                checked={gt.selectedIds.has(chunk.id)}
+                onChange={() => gt.toggleChunk(chunk.id)}
+              />
+            )}
+            <span className="chunk-meta">
+              {chunk.id} (score {chunk.score.toFixed(2)}
+              {chunk.topic ? `, ${chunk.topic}` : ""})
+            </span>
+            <span className="chunk-text">{chunk.text}</span>
+          </label>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function QueryScreen() {
   const [mode, setMode] = useState("ask");
   const [inputText, setInputText] = useState("");
@@ -82,34 +242,11 @@ function QueryScreen() {
 
   const [topN, setTopN] = useState(20);
   const [chunks, setChunks] = useState([]);
-  const [selectedChunkIds, setSelectedChunkIds] = useState(new Set());
-  const [gtAnswer, setGtAnswer] = useState("");
-  const [gtSaving, setGtSaving] = useState(false);
-  const [gtError, setGtError] = useState(null);
-  const [gtSavedId, setGtSavedId] = useState(null);
-  const [activeGtCases, setActiveGtCases] = useState([]);
-  const [gtReplacesId, setGtReplacesId] = useState("");
-
-  const loadActiveGtCases = async () => {
-    try {
-      const data = await apiJson("/api/ground-truth");
-      setActiveGtCases(data.cases.filter((c) => c.superseded_at === null));
-    } catch (err) {
-      setActiveGtCases([]);
-    }
-  };
-
-  useEffect(() => {
-    loadActiveGtCases();
-  }, []);
+  const gt = useGroundTruth();
 
   const resetChunkBrowser = () => {
     setChunks([]);
-    setSelectedChunkIds(new Set());
-    setGtAnswer("");
-    setGtError(null);
-    setGtSavedId(null);
-    setGtReplacesId("");
+    gt.reset();
   };
 
   const handleModeChange = (newMode) => {
@@ -159,7 +296,7 @@ function QueryScreen() {
       setSources(mode === "ask" ? data.answer.sources : []);
       setTtft(data.ttft_seconds);
       setResponseTime(data.response_time_seconds);
-      if (mode === "ask") setGtAnswer(data.answer.text);
+      if (mode === "ask") gt.setExpectedAnswer(data.answer.text);
 
       if (chunksPromise) {
         const chunksRes = await chunksPromise;
@@ -170,55 +307,6 @@ function QueryScreen() {
       setError("Could not reach the backend. Is it running?");
     } finally {
       setLoading(false);
-    }
-  };
-
-  const toggleChunkSelected = (chunkId) => {
-    setSelectedChunkIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(chunkId)) next.delete(chunkId);
-      else next.add(chunkId);
-      return next;
-    });
-  };
-
-  const handleSaveGroundTruth = async () => {
-    if (selectedChunkIds.size === 0 || !gtAnswer.trim() || gtSaving) return;
-
-    setGtSaving(true);
-    setGtError(null);
-    setGtSavedId(null);
-
-    const expectedChunks = chunks
-      .filter((c) => selectedChunkIds.has(c.id))
-      .map((c) => ({ chunk_id: c.id, chunk: c.text }));
-
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/ground-truth`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          question: inputText,
-          expected_answer: gtAnswer,
-          expected_chunks: expectedChunks,
-          replaces_id: gtReplacesId === "" ? null : Number(gtReplacesId),
-        }),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        setGtError(data.detail || `Request failed (HTTP ${res.status})`);
-        return;
-      }
-
-      setGtSavedId(data.id);
-      setGtReplacesId("");
-      loadActiveGtCases();
-    } catch (err) {
-      setGtError("Could not reach the backend. Is it running?");
-    } finally {
-      setGtSaving(false);
     }
   };
 
@@ -305,59 +393,14 @@ function QueryScreen() {
         <summary>Inspection</summary>
         <InspectionMetrics ttft={ttft} responseTime={responseTime} />
 
+        {mode === "ask" && chunks.length > 0 && <GroundTruthToggle gt={gt} />}
+
+        {mode === "ask" && gt.mode && <GroundTruthForm gt={gt} onSave={() => gt.save(inputText, chunks)} />}
+
         {mode === "ask" && chunks.length > 0 && (
           <div className="chunk-browser">
-            <label>Retrieved chunks ({chunks.length}) — select the ones that support the answer</label>
-            <ul className="chunk-list">
-              {chunks.map((chunk) => (
-                <li key={chunk.id}>
-                  <label className="chunk-item">
-                    <input
-                      type="checkbox"
-                      checked={selectedChunkIds.has(chunk.id)}
-                      onChange={() => toggleChunkSelected(chunk.id)}
-                    />
-                    <span className="chunk-meta">
-                      {chunk.id} (score {chunk.score.toFixed(2)}
-                      {chunk.topic ? `, ${chunk.topic}` : ""})
-                    </span>
-                    <span className="chunk-text">{chunk.text}</span>
-                  </label>
-                </li>
-              ))}
-            </ul>
-
-            {selectedChunkIds.size > 0 && (
-              <div className="gt-form">
-                <label htmlFor="gt-answer">Expected answer for this ground truth case</label>
-                <textarea
-                  id="gt-answer"
-                  rows={4}
-                  value={gtAnswer}
-                  onChange={(e) => setGtAnswer(e.target.value)}
-                />
-                <label htmlFor="gt-replaces">Replaces an existing case (optional)</label>
-              <select
-                id="gt-replaces"
-                value={gtReplacesId}
-                onChange={(e) => setGtReplacesId(e.target.value)}
-              >
-                <option value="">None: this is a new case</option>
-                {activeGtCases.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    #{c.id} {c.question.length > 70 ? `${c.question.slice(0, 70)}…` : c.question}
-                  </option>
-                ))}
-              </select>
-              <button type="button" onClick={handleSaveGroundTruth} disabled={gtSaving}>
-                  {gtSaving ? "Saving..." : "Save Ground Truth Case"}
-                </button>
-                {gtError && <div className="error-box">{gtError}</div>}
-                {gtSavedId !== null && (
-                  <div className="success-box">Saved as ground truth case #{gtSavedId}.</div>
-                )}
-              </div>
-            )}
+            <label>Retrieved chunks ({chunks.length})</label>
+            <ChunkList chunks={chunks} gt={gt} />
           </div>
         )}
       </details>
@@ -629,6 +672,7 @@ function IngestScreen() {
 
 function AgentScreen() {
   const [question, setQuestion] = useState("");
+  const [askedQuestion, setAskedQuestion] = useState(""); // the question the shown result belongs to
   const [loading, setLoading] = useState(false);
   const [answer, setAnswer] = useState("");
   const [sources, setSources] = useState([]);
@@ -636,6 +680,10 @@ function AgentScreen() {
   const [ttft, setTtft] = useState(null);
   const [responseTime, setResponseTime] = useState(null);
   const [error, setError] = useState(null);
+  const gt = useGroundTruth();
+
+  // Every distinct chunk any search returned, for the ground truth case.
+  const allChunks = [...new Map(steps.flatMap((s) => s.chunks).map((c) => [c.id, c])).values()];
 
   const handleSubmit = async () => {
     if (!question.trim() || loading) return;
@@ -647,6 +695,7 @@ function AgentScreen() {
     setSteps([]);
     setTtft(null);
     setResponseTime(null);
+    gt.reset();
 
     try {
       const res = await fetch(`${API_BASE_URL}/api/agent/ask`, {
@@ -661,11 +710,13 @@ function AgentScreen() {
         return;
       }
 
+      setAskedQuestion(question);
       setAnswer(data.answer.text);
       setSources(data.answer.sources);
       setSteps(data.steps);
       setTtft(data.ttft_seconds);
       setResponseTime(data.response_time_seconds);
+      gt.setExpectedAnswer(data.answer.text);
     } catch (err) {
       setError("Could not reach the backend. Is it running?");
     } finally {
@@ -712,17 +763,21 @@ function AgentScreen() {
         <summary>Inspection</summary>
         <InspectionMetrics ttft={ttft} responseTime={responseTime} />
 
+        {steps.length > 0 && <GroundTruthToggle gt={gt} />}
+
+        {gt.mode && <GroundTruthForm gt={gt} onSave={() => gt.save(askedQuestion, allChunks)} />}
+
         {steps.length > 0 && (
           <div className="agent-steps">
             <label>Agent steps ({steps.length})</label>
-            <ol className="sources-list">
-              {steps.map((step, i) => (
-                <li key={i}>
-                  <span className="source-id">{step.tool}</span>
-                  <span className="source-snippet"> — {JSON.stringify(step.arguments)}</span>
-                </li>
-              ))}
-            </ol>
+            {steps.map((step, i) => (
+              <details key={i} className="agent-step">
+                <summary>
+                  [{i + 1}] {step.tool} — {JSON.stringify(step.arguments)} ({step.chunks.length} chunks)
+                </summary>
+                <ChunkList chunks={step.chunks} gt={gt} />
+              </details>
+            ))}
           </div>
         )}
       </details>

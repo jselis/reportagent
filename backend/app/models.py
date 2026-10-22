@@ -205,15 +205,6 @@ class GroundTruthCaseListResponse(BaseModel):
     cases: list[GroundTruthCaseListItem]
 
 
-class RetrievedChunk(BaseModel):
-    id: str  # the chunk's id in the Pinecone index (document_id-chunk_id)
-    document_id: str
-    chunk_id: int
-    text: str
-    score: float
-    topic: str | None = None  # None for chunks ingested before this field existed
-
-
 class IngestResponse(BaseModel):
     document_id: str
     chunks_ingested: int
@@ -230,11 +221,21 @@ class AskResponse(LLMResponseMeta):
     answer: Answer
 
 
+class RetrievedChunk(BaseModel):
+    id: str  # the chunk's id in the Pinecone index (document_id-chunk_id)
+    document_id: str
+    chunk_id: int
+    text: str
+    score: float
+    topic: str | None = None  # None for chunks ingested before this field existed
+
+
 class AgentStep(BaseModel):
-    """One tool call the agent made, for the inspection view."""
+    """One tool call the agent made, with the chunks it returned, for the inspection view."""
 
     tool: str
     arguments: dict
+    chunks: list[RetrievedChunk]
 
 
 class AgentAskResponse(AskResponse):

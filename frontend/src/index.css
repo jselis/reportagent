@@ -289,9 +289,17 @@ body {
   grid-column: 2;
 }
 
+.chunk-item-plain {
+  grid-template-columns: 1fr;
+  cursor: default;
+}
+
+.chunk-item-plain .chunk-text {
+  grid-column: 1;
+}
+
 .gt-form {
-  border-top: 1px solid #ddd;
-  padding-top: 1rem;
+  margin-bottom: 1rem;
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
@@ -527,6 +535,10 @@ body {
   color: #d4d4d8;
 }
 
+.inspection-panel .chunk-text {
+  color: #a1a1aa;
+}
+
 .inspection-panel input[type="text"],
 .inspection-panel textarea {
   background: #2a2a32;
@@ -659,4 +671,31 @@ body {
 .gt-form select {
   width: 100%;
   margin: 0.3rem 0 0.8rem;
+}
+
+.gt-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 1rem 0 0.8rem;
+  cursor: pointer;
+}
+
+.gt-hint {
+  margin: 0.4rem 0 0.8rem;
+  color: #a1a1aa;
+}
+
+.agent-step {
+  margin-bottom: 0.6rem;
+}
+
+.agent-step > summary {
+  cursor: pointer;
+  color: #d4d4d8;
+  word-break: break-word;
+}
+
+.agent-step .chunk-list {
+  margin-top: 0.5rem;
 }

@@ -75,8 +75,8 @@ def _build_agent(state: _RunState, max_llm_calls: int, search_top_k: int) -> Age
         Args:
             query: A natural-language description of what to find.
         """
-        state.steps.append(AgentStep(tool="search_documents", arguments={"query": query}))
         found = retrieve(query, top_k=search_top_k)
+        state.steps.append(AgentStep(tool="search_documents", arguments={"query": query}, chunks=found))
         for chunk in found:
             state.chunks.setdefault(chunk.id, chunk)
         return {"chunks": [{"id": c.id, "text": c.text} for c in found]}
