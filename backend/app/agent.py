@@ -31,8 +31,9 @@ from app.research import build_answer
 
 MODEL = "openai/gpt-5.6-terra"  # LiteLLM model string: provider prefix + OpenAI model name
 LLM_CALL_TIMEOUT_SECONDS = 30.0
+# Settings of the Agent tab / /api/agent/ask; evaluation runs pass their own.
 MAX_LLM_CALLS = 10  # upper bound on model calls per question: searches + the final answer
-TOP_K = 5
+TOP_K = 5  # chunks returned per search
 APP_NAME = "reportagent"
 USER_ID = "user"
 
@@ -61,7 +62,7 @@ class _RunState:
     answer: GroundedAnswer | None = None
 
 
-def _build_agent(state: _RunState) -> Agent:
+def _build_agent(state: _RunState, max_llm_calls: int, search_top_k: int) -> Agent:
     """Build the agent with tools bound to this run's state."""
 
     def search_documents(query: str) -> dict:
@@ -75,7 +76,7 @@ def _build_agent(state: _RunState) -> Agent:
             query: A natural-language description of what to find.
         """
         state.steps.append(AgentStep(tool="search_documents", arguments={"query": query}))
-        found = retrieve(query, top_k=TOP_K)
+        found = retrieve(query, top_k=search_top_k)
         for chunk in found:
             state.chunks.setdefault(chunk.id, chunk)
         return {"chunks": [{"id": c.id, "text": c.text} for c in found]}
@@ -102,15 +103,15 @@ def _build_agent(state: _RunState) -> Agent:
         model=LiteLlm(
             model=MODEL, api_key=settings.openai_api_key, timeout=LLM_CALL_TIMEOUT_SECONDS
         ),
-        instruction=INSTRUCTION.format(max_model_calls=MAX_LLM_CALLS),
+        instruction=INSTRUCTION.format(max_model_calls=max_llm_calls),
         tools=[search_documents, submit_answer],
     )
 
 
-async def _run(question: str, state: _RunState) -> int:
+async def _run(question: str, state: _RunState, max_llm_calls: int, search_top_k: int) -> int:
     """Run the agent to completion and return the total tokens used."""
     service = InMemorySessionService()
-    runner = Runner(agent=_build_agent(state), app_name=APP_NAME, session_service=service)
+    runner = Runner(agent=_build_agent(state, max_llm_calls, search_top_k), app_name=APP_NAME, session_service=service)
     session = await service.create_session(app_name=APP_NAME, user_id=USER_ID)
     message = types.Content(role="user", parts=[types.Part(text=question)])
 
@@ -119,22 +120,31 @@ async def _run(question: str, state: _RunState) -> int:
         user_id=USER_ID,
         session_id=session.id,
         new_message=message,
-        run_config=RunConfig(max_llm_calls=MAX_LLM_CALLS),
+        run_config=RunConfig(max_llm_calls=max_llm_calls),
     ):
         if event.usage_metadata and event.usage_metadata.total_token_count:
             tokens_used += event.usage_metadata.total_token_count
     return tokens_used
 
 
-def run_agent(question: str) -> AgentAskResponse:
+@dataclass
+class AgentRun:
+    """An agent response plus what the run saw and chose, for evaluation."""
+
+    response: AgentAskResponse
+    fed_chunks: list[RetrievedChunk]  # every chunk returned by any search: all that reached the model
+    selected_chunks: list[RetrievedChunk]  # the chunks the final answer cites
+
+
+def run_agent_with_chunks(question: str, max_llm_calls: int, search_top_k: int) -> AgentRun:
     """Answer a question with an agent that searches the documents as often as it needs."""
     state = _RunState()
     start = time.perf_counter()
 
     try:
-        tokens_used = asyncio.run(_run(question, state))
+        tokens_used = asyncio.run(_run(question, state, max_llm_calls, search_top_k))
     except LlmCallsLimitExceededError as exc:
-        raise AgentDidNotAnswerError(f"The agent used all {MAX_LLM_CALLS} allowed LLM calls") from exc
+        raise AgentDidNotAnswerError(f"The agent used all {max_llm_calls} allowed LLM calls") from exc
     except openai.APITimeoutError as exc:
         raise ResearchTimeoutError(
             f"An LLM call did not complete within {LLM_CALL_TIMEOUT_SECONDS}s"
@@ -149,9 +159,18 @@ def run_agent(question: str) -> AgentAskResponse:
     if state.answer is None:
         raise AgentDidNotAnswerError("The agent run ended without a valid submit_answer call")
 
-    base = AskResponse(
-        answer=build_answer(state.answer, list(state.chunks.values())),
-        tokens_used=tokens_used,
-        response_time_seconds=elapsed,
+    fed_chunks = list(state.chunks.values())
+    answer = build_answer(state.answer, fed_chunks)
+    cited_ids = {source.id for source in answer.sources if source.type == "document"}
+
+    base = AskResponse(answer=answer, tokens_used=tokens_used, response_time_seconds=elapsed)
+    return AgentRun(
+        response=AgentAskResponse(**base.model_dump(), steps=state.steps),
+        fed_chunks=fed_chunks,
+        selected_chunks=[c for c in fed_chunks if c.id in cited_ids],
     )
-    return AgentAskResponse(**base.model_dump(), steps=state.steps)
+
+
+def run_agent(question: str) -> AgentAskResponse:
+    """The Agent tab's entry point: the agent with this module's default settings."""
+    return run_agent_with_chunks(question, MAX_LLM_CALLS, TOP_K).response

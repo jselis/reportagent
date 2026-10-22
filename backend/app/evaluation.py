@@ -1,13 +1,18 @@
+from dataclasses import dataclass
+
 from psycopg2.extras import Json
 
+from app import agent, llm
 from app.db import get_connection
 from app.jobs import Job
 from app.llm import run_llm_request
 from app.models import (
     CorrectnessJudgement,
+    EvalRunNotFoundError,
     EvalRunResponse,
-    EvaluationSummaryResponse,
     FaithfulnessJudgement,
+    RetrievedChunk,
+    StartEvalRunRequest,
 )
 from app.research import research
 
@@ -25,33 +30,163 @@ Score:
 - 1: correct — semantically equivalent to the reference answer, even if worded differently."""
 
 
-def run_generation(job: Job) -> None:
-    """Re-run every ground truth case's question through the current retrieval + answer
-    pipeline, storing the result as actual_answer/actual_chunks."""
+@dataclass
+class _Generated:
+    """What one pipeline run produced for one question."""
+
+    answer: str
+    fed_chunks: list[RetrievedChunk]  # everything that reached the LLM (recall basis)
+    selected_chunks: list[RetrievedChunk]  # what the pipeline decided is relevant (precision basis)
+    tokens_used: int
+    response_time_seconds: float
+    n_searches: int | None
+
+
+def _generate_one(pipeline: str, config: dict, question: str) -> _Generated:
+    if pipeline == "rag":
+        response, chunks = research(question, config["top_k"])
+        # Plain RAG feeds the top-k to the model and treats all of them as selected.
+        return _Generated(
+            answer=response.answer.text,
+            fed_chunks=chunks,
+            selected_chunks=chunks,
+            tokens_used=response.tokens_used,
+            response_time_seconds=response.response_time_seconds,
+            n_searches=None,
+        )
+    if pipeline == "agent":
+        run = agent.run_agent_with_chunks(question, config["max_llm_calls"], config["search_top_k"])
+        return _Generated(
+            answer=run.response.answer.text,
+            fed_chunks=run.fed_chunks,
+            selected_chunks=run.selected_chunks,
+            tokens_used=run.response.tokens_used,
+            response_time_seconds=run.response.response_time_seconds,
+            n_searches=len(run.response.steps),
+        )
+    raise ValueError(f"Unknown pipeline: {pipeline}")
+
+
+def _chunks_json(chunks: list[RetrievedChunk]) -> Json:
+    return Json([{"chunk_id": c.id, "chunk": c.text} for c in chunks])
+
+
+def _answer_model(pipeline: str) -> str:
+    return llm.MODEL if pipeline == "rag" else agent.MODEL
+
+
+def create_eval_run(request: StartEvalRunRequest) -> int:
+    """Insert a new run (status 'generating') with everything needed to reproduce it."""
+    config = request.config.model_dump(exclude={"pipeline"})
+    config["answer_model"] = _answer_model(request.config.pipeline)
+    config["repeats"] = request.repeats
+
+    conn = get_connection()
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO eval_run (label, pipeline, config, status)
+                VALUES (%s, %s, %s, 'generating')
+                RETURNING id
+                """,
+                (request.label, request.config.pipeline, Json(config)),
+            )
+            (eval_run_id,) = cur.fetchone()
+    finally:
+        conn.close()
+    return eval_run_id
+
+
+def require_eval_run(eval_run_id: int) -> None:
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT id, question FROM gt_case")
-            cases = cur.fetchall()
-        job.set_total(len(cases))
+            cur.execute("SELECT 1 FROM eval_run WHERE id = %s", (eval_run_id,))
+            if cur.fetchone() is None:
+                raise EvalRunNotFoundError(eval_run_id)
+    finally:
+        conn.close()
 
-        for case_id, question in cases:
-            try:
-                response, chunks = research(question)
-                actual_chunks = [{"chunk_id": c.id, "chunk": c.text} for c in chunks]
+
+def _set_run_status(conn, eval_run_id: int, status: str) -> None:
+    with conn, conn.cursor() as cur:
+        cur.execute("UPDATE eval_run SET status = %s WHERE id = %s", (status, eval_run_id))
+
+
+def run_generation(job: Job, eval_run_id: int) -> None:
+    """Bring a run up to date: generate an answer for every active ground truth case (and
+    repeat) that has no successful result in the run yet, using the run's stored config.
+    Works for a fresh run, for cases added or corrected later, and to retry failures."""
+    conn = get_connection()
+    try:
+        _set_run_status(conn, eval_run_id, "generating")
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT pipeline, config FROM eval_run WHERE id = %s", (eval_run_id,))
+                pipeline, config = cur.fetchone()
+                cur.execute("SELECT id, question FROM gt_case WHERE superseded_at IS NULL ORDER BY id")
+                cases = cur.fetchall()
+                cur.execute(
+                    """
+                    SELECT gt_case_id, repeat_index FROM eval_run_case
+                    WHERE eval_run_id = %s AND generation_status = 'ok'
+                    """,
+                    (eval_run_id,),
+                )
+                done = set(cur.fetchall())
+
+            todo = [
+                (case_id, question, repeat_index)
+                for case_id, question in cases
+                for repeat_index in range(config["repeats"])
+                if (case_id, repeat_index) not in done
+            ]
+            job.set_total(len(todo))
+
+            for case_id, question, repeat_index in todo:
+                try:
+                    generated = _generate_one(pipeline, config, question)
+                    row = (
+                        "ok", None, generated.answer,
+                        _chunks_json(generated.fed_chunks), _chunks_json(generated.selected_chunks),
+                        generated.tokens_used, generated.response_time_seconds, generated.n_searches,
+                    )
+                    failed = False
+                except Exception as exc:
+                    row = ("failed", f"{type(exc).__name__}: {exc}"[:500], None, None, None, None, None, None)
+                    failed = True
 
                 with conn, conn.cursor() as cur:
+                    # A retried (previously failed) row is reset, scores included.
                     cur.execute(
                         """
-                        UPDATE gt_case
-                        SET actual_answer = %s, actual_chunks = %s
-                        WHERE id = %s
+                        INSERT INTO eval_run_case (
+                            eval_run_id, gt_case_id, repeat_index, generation_status, error,
+                            actual_answer, fed_chunks, selected_chunks,
+                            tokens_used, response_time_seconds, n_searches
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (eval_run_id, gt_case_id, repeat_index) DO UPDATE SET
+                            generation_status = EXCLUDED.generation_status,
+                            error = EXCLUDED.error,
+                            generated_at = now(),
+                            actual_answer = EXCLUDED.actual_answer,
+                            fed_chunks = EXCLUDED.fed_chunks,
+                            selected_chunks = EXCLUDED.selected_chunks,
+                            tokens_used = EXCLUDED.tokens_used,
+                            response_time_seconds = EXCLUDED.response_time_seconds,
+                            n_searches = EXCLUDED.n_searches,
+                            faithfulness = NULL, correctness = NULL,
+                            retrieval_recall = NULL, retrieval_precision = NULL, retrieval_f1 = NULL
                         """,
-                        (response.answer.text, Json(actual_chunks), case_id),
+                        (eval_run_id, case_id, repeat_index, *row),
                     )
-                job.increment()
-            except Exception:
-                job.increment(failed=True)
+                job.increment(failed=failed)
+        except Exception:
+            _set_run_status(conn, eval_run_id, "failed")
+            raise
+        _set_run_status(conn, eval_run_id, "generated")
     finally:
         conn.close()
 
@@ -80,81 +215,77 @@ def _score_correctness(question: str, actual_answer: str, expected_answer: str) 
     return judgement.score
 
 
-def _score_retrieval(expected_chunks: list[dict], actual_chunks: list[dict]) -> tuple[float, float, float]:
+def _score_retrieval(
+    expected_chunks: list[dict], fed_chunks: list[dict], selected_chunks: list[dict]
+) -> tuple[float, float, float]:
+    """Recall is measured on everything that reached the LLM (what never reached it could
+    not have been used); precision on what the pipeline selected as relevant."""
     expected_ids = {c["chunk_id"] for c in expected_chunks}
-    actual_ids = {c["chunk_id"] for c in actual_chunks}
-    overlap = expected_ids & actual_ids
+    fed_ids = {c["chunk_id"] for c in fed_chunks}
+    selected_ids = {c["chunk_id"] for c in selected_chunks}
 
-    recall = len(overlap) / len(expected_ids) if expected_ids else 0.0
-    precision = len(overlap) / len(actual_ids) if actual_ids else 0.0
+    recall = len(expected_ids & fed_ids) / len(expected_ids) if expected_ids else 0.0
+    precision = len(expected_ids & selected_ids) / len(selected_ids) if selected_ids else 0.0
     f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
     return recall, precision, f1
 
 
-def run_scoring(job: Job) -> None:
-    """Score every ground truth case that has already been through generation
-    (has actual_answer/actual_chunks) on faithfulness, correctness, and retrieval metrics."""
+def run_scoring(job: Job, eval_run_id: int, rescore_all: bool) -> None:
+    """Score the run's generated answers for active ground truth cases on faithfulness,
+    correctness and retrieval metrics. By default only answers without scores yet are
+    scored; rescore_all overwrites existing scores (e.g. after improving the judge)."""
     conn = get_connection()
     try:
-        with conn.cursor() as cur:
+        _set_run_status(conn, eval_run_id, "scoring")
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT erc.id, g.question, g.expected_answer, g.expected_chunks,
+                           erc.actual_answer, erc.fed_chunks, erc.selected_chunks
+                    FROM eval_run_case erc
+                    JOIN gt_case g ON g.id = erc.gt_case_id
+                    WHERE erc.eval_run_id = %s
+                      AND erc.generation_status = 'ok'
+                      AND g.superseded_at IS NULL
+                      AND (%s OR erc.faithfulness IS NULL OR erc.correctness IS NULL)
+                    ORDER BY erc.id
+                    """,
+                    (eval_run_id, rescore_all),
+                )
+                rows = cur.fetchall()
+            job.set_total(len(rows))
+
+            for row_id, question, expected_answer, expected_chunks, actual_answer, fed, selected in rows:
+                try:
+                    faithfulness = _score_faithfulness(actual_answer, fed)
+                    correctness = _score_correctness(question, actual_answer, expected_answer)
+                    recall, precision, f1 = _score_retrieval(expected_chunks, fed, selected)
+
+                    with conn, conn.cursor() as cur:
+                        cur.execute(
+                            """
+                            UPDATE eval_run_case
+                            SET faithfulness = %s, correctness = %s,
+                                retrieval_recall = %s, retrieval_precision = %s, retrieval_f1 = %s
+                            WHERE id = %s
+                            """,
+                            (faithfulness, correctness, recall, precision, f1, row_id),
+                        )
+                    job.increment()
+                except Exception:
+                    job.increment(failed=True)
+        except Exception:
+            _set_run_status(conn, eval_run_id, "failed")
+            raise
+
+        with conn, conn.cursor() as cur:
             cur.execute(
-                """
-                SELECT id, question, expected_answer, expected_chunks, actual_answer, actual_chunks
-                FROM gt_case
-                WHERE actual_answer IS NOT NULL AND actual_chunks IS NOT NULL
-                """
+                "UPDATE eval_run SET status = 'scored', judge_model = %s, scored_at = now() WHERE id = %s",
+                (llm.MODEL, eval_run_id),
             )
-            cases = cur.fetchall()
-        job.set_total(len(cases))
-
-        for case_id, question, expected_answer, expected_chunks, actual_answer, actual_chunks in cases:
-            try:
-                faithfulness = _score_faithfulness(actual_answer, actual_chunks)
-                correctness = _score_correctness(question, actual_answer, expected_answer)
-                recall, precision, f1 = _score_retrieval(expected_chunks, actual_chunks)
-
-                with conn, conn.cursor() as cur:
-                    cur.execute(
-                        """
-                        UPDATE gt_case
-                        SET faithfulness = %s, correctness = %s,
-                            retrieval_recall = %s, retrieval_precision = %s, retrieval_f1 = %s
-                        WHERE id = %s
-                        """,
-                        (faithfulness, correctness, recall, precision, f1, case_id),
-                    )
-                job.increment()
-            except Exception:
-                job.increment(failed=True)
     finally:
         conn.close()
-
-
-def get_evaluation_summary() -> EvaluationSummaryResponse:
-    conn = get_connection()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT
-                    count(*),
-                    avg(faithfulness), avg(correctness),
-                    avg(retrieval_recall), avg(retrieval_precision), avg(retrieval_f1)
-                FROM gt_case
-                """
-            )
-            count, avg_f, avg_c, avg_r, avg_p, avg_f1 = cur.fetchone()
-    finally:
-        conn.close()
-
-    return EvaluationSummaryResponse(
-        case_count=count,
-        avg_faithfulness=avg_f,
-        avg_correctness=avg_c,
-        avg_retrieval_recall=avg_r,
-        avg_retrieval_precision=avg_p,
-        avg_retrieval_f1=avg_f1,
-    )
 
 
 def list_eval_runs() -> list[EvalRunResponse]:

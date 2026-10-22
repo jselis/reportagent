@@ -2,6 +2,26 @@ import { useEffect, useState } from "react";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// JSON request helper for the evaluation endpoints: throws an Error with the backend's message.
+async function apiJson(path, options) {
+  const res = await fetch(`${API_BASE_URL}${path}`, options);
+  const data = res.status === 204 ? null : await res.json().catch(() => null);
+  if (!res.ok) throw new Error((data && data.detail) || `Request failed (HTTP ${res.status})`);
+  return data;
+}
+
+// Wait for a background job ("generate" or "score") to finish, reporting its progress.
+async function pollJob(kind, onProgress) {
+  while (true) {
+    const status = await apiJson(`/api/evaluation/${kind}/status`);
+    onProgress(status);
+    if (status.status === "done") return;
+    await sleep(1000);
+  }
+}
+
 const MODES = {
   ask: {
     label: "Ask",
@@ -67,6 +87,21 @@ function QueryScreen() {
   const [gtSaving, setGtSaving] = useState(false);
   const [gtError, setGtError] = useState(null);
   const [gtSavedId, setGtSavedId] = useState(null);
+  const [activeGtCases, setActiveGtCases] = useState([]);
+  const [gtReplacesId, setGtReplacesId] = useState("");
+
+  const loadActiveGtCases = async () => {
+    try {
+      const data = await apiJson("/api/ground-truth");
+      setActiveGtCases(data.cases.filter((c) => c.superseded_at === null));
+    } catch (err) {
+      setActiveGtCases([]);
+    }
+  };
+
+  useEffect(() => {
+    loadActiveGtCases();
+  }, []);
 
   const resetChunkBrowser = () => {
     setChunks([]);
@@ -74,6 +109,7 @@ function QueryScreen() {
     setGtAnswer("");
     setGtError(null);
     setGtSavedId(null);
+    setGtReplacesId("");
   };
 
   const handleModeChange = (newMode) => {
@@ -165,6 +201,7 @@ function QueryScreen() {
           question: inputText,
           expected_answer: gtAnswer,
           expected_chunks: expectedChunks,
+          replaces_id: gtReplacesId === "" ? null : Number(gtReplacesId),
         }),
       });
 
@@ -176,6 +213,8 @@ function QueryScreen() {
       }
 
       setGtSavedId(data.id);
+      setGtReplacesId("");
+      loadActiveGtCases();
     } catch (err) {
       setGtError("Could not reach the backend. Is it running?");
     } finally {
@@ -297,7 +336,20 @@ function QueryScreen() {
                   value={gtAnswer}
                   onChange={(e) => setGtAnswer(e.target.value)}
                 />
-                <button type="button" onClick={handleSaveGroundTruth} disabled={gtSaving}>
+                <label htmlFor="gt-replaces">Replaces an existing case (optional)</label>
+              <select
+                id="gt-replaces"
+                value={gtReplacesId}
+                onChange={(e) => setGtReplacesId(e.target.value)}
+              >
+                <option value="">None: this is a new case</option>
+                {activeGtCases.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    #{c.id} {c.question.length > 70 ? `${c.question.slice(0, 70)}…` : c.question}
+                  </option>
+                ))}
+              </select>
+              <button type="button" onClick={handleSaveGroundTruth} disabled={gtSaving}>
                   {gtSaving ? "Saving..." : "Save Ground Truth Case"}
                 </button>
                 {gtError && <div className="error-box">{gtError}</div>}
@@ -747,59 +799,244 @@ const EVAL_METRIC_ROWS = [
 
 function EvalsScreen() {
   const [runs, setRuns] = useState(null);
+  const [gtCases, setGtCases] = useState([]);
   const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(null); // null, or what is running: "Generating answers" | "Scoring"
+  const [progress, setProgress] = useState({ total: 0, done: 0, failed: 0 });
+
+  const [pipeline, setPipeline] = useState("rag");
+  const [runLabel, setRunLabel] = useState("");
+  const [repeats, setRepeats] = useState(1);
+  const [topK, setTopK] = useState(5);
+  const [maxLlmCalls, setMaxLlmCalls] = useState(10);
+  const [searchTopK, setSearchTopK] = useState(5);
+
+  const loadAll = async () => {
+    try {
+      const [runsData, gtData] = await Promise.all([
+        apiJson("/api/evaluation/runs"),
+        apiJson("/api/ground-truth"),
+      ]);
+      setRuns(runsData.runs);
+      setGtCases(gtData.cases);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
 
   useEffect(() => {
-    const load = async () => {
-      try {
-        const res = await fetch(`${API_BASE_URL}/api/evaluation/runs`);
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || "Failed to load evaluation runs.");
-        setRuns(data.runs);
-      } catch (err) {
-        setError(err.message);
-      }
-    };
-    load();
+    loadAll();
   }, []);
 
-  if (error) return <div className="error-box">{error}</div>;
-  if (!runs) return <p>Loading…</p>;
-  if (runs.length === 0) return <p>No evaluation runs yet.</p>;
+  const runJobStep = async (phase, startPath, kind) => {
+    setBusy(phase);
+    setProgress({ total: 0, done: 0, failed: 0 });
+    const started = await apiJson(startPath, { method: "POST" });
+    if (started && started.started === false) {
+      throw new Error("Another evaluation job is already running. Try again shortly.");
+    }
+    await pollJob(kind, setProgress);
+  };
+
+  const execute = async (steps) => {
+    if (busy) return;
+    setError(null);
+    try {
+      await steps();
+    } catch (err) {
+      setError(err.message || "Could not reach the backend. Is it running?");
+    } finally {
+      setBusy(null);
+      loadAll();
+    }
+  };
+
+  const generateAndScore = async (evalRunId) => {
+    await runJobStep("Generating answers", `/api/evaluation/runs/${evalRunId}/generate`, "generate");
+    await runJobStep("Scoring", `/api/evaluation/runs/${evalRunId}/score?rescore_all=false`, "score");
+  };
+
+  const handleStartRun = () =>
+    execute(async () => {
+      const isPositiveInt = (v) => Number.isInteger(v) && v >= 1;
+      if (!isPositiveInt(repeats)) throw new Error("Repeats must be a whole number of at least 1.");
+      let config;
+      if (pipeline === "rag") {
+        if (!isPositiveInt(topK)) throw new Error("Top K must be a whole number of at least 1.");
+        config = { pipeline, top_k: topK };
+      } else {
+        if (!Number.isInteger(maxLlmCalls) || maxLlmCalls < 2) {
+          throw new Error("Max model calls must be a whole number of at least 2.");
+        }
+        if (!isPositiveInt(searchTopK)) throw new Error("Chunks per search must be a whole number of at least 1.");
+        config = { pipeline, max_llm_calls: maxLlmCalls, search_top_k: searchTopK };
+      }
+
+      setBusy("Generating answers");
+      setProgress({ total: 0, done: 0, failed: 0 });
+      const created = await apiJson("/api/evaluation/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ label: runLabel.trim() || null, repeats, config }),
+      });
+      await pollJob("generate", setProgress);
+      await runJobStep("Scoring", `/api/evaluation/runs/${created.eval_run_id}/score?rescore_all=false`, "score");
+    });
+
+  const handleUpdateRun = (evalRunId) => execute(() => generateAndScore(evalRunId));
+
+  const handleRescore = (evalRunId) =>
+    execute(() => runJobStep("Scoring", `/api/evaluation/runs/${evalRunId}/score?rescore_all=true`, "score"));
+
+  const handleSupersede = (gtCase) => {
+    if (!window.confirm(`Mark case #${gtCase.id} as outdated? Evaluation runs will stop counting it.`)) return;
+    execute(() => apiJson(`/api/ground-truth/${gtCase.id}/supersede`, { method: "POST" }));
+  };
+
+  if (!runs) return error ? <div className="error-box">{error}</div> : <p>Loading…</p>;
+
+  const activeCases = gtCases.filter((c) => c.superseded_at === null);
 
   return (
-    <div className="evals-table-wrapper">
-      <table className="evals-table">
-        <thead>
-          <tr>
-            <th />
-            {runs.map((run) => (
-              <th key={run.id}>
-                <div>
-                  #{run.id} · {run.pipeline}
-                </div>
-                <div className="evals-run-meta">{new Date(run.created_at).toLocaleString()}</div>
-                <div className="evals-run-meta">{run.status}</div>
-                <div className="evals-run-meta">
-                  {Object.entries(run.config).map(([k, v]) => `${k}=${v}`).join(", ")}
-                </div>
-                {run.label && <div className="evals-run-meta">{run.label}</div>}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {EVAL_METRIC_ROWS.map(({ label, key, format }) => (
-            <tr key={key}>
-              <th scope="row">{label}</th>
-              {runs.map((run) => (
-                <td key={run.id}>{run[key] === null ? "–" : format(run[key])}</td>
+    <>
+      <details className="eval-form">
+        <summary>New evaluation run</summary>
+        <div className="eval-form-fields">
+          <label>
+            Pipeline
+            <select value={pipeline} onChange={(e) => setPipeline(e.target.value)}>
+              <option value="rag">Plain RAG</option>
+              <option value="agent">Agent</option>
+            </select>
+          </label>
+          {pipeline === "rag" ? (
+            <label>
+              Top K (chunks retrieved)
+              <input type="number" min="1" value={topK} onChange={(e) => setTopK(Number(e.target.value))} />
+            </label>
+          ) : (
+            <>
+              <label>
+                Max model calls
+                <input
+                  type="number"
+                  min="2"
+                  value={maxLlmCalls}
+                  onChange={(e) => setMaxLlmCalls(Number(e.target.value))}
+                />
+              </label>
+              <label>
+                Chunks per search
+                <input
+                  type="number"
+                  min="1"
+                  value={searchTopK}
+                  onChange={(e) => setSearchTopK(Number(e.target.value))}
+                />
+              </label>
+            </>
+          )}
+          <label>
+            Repeats per case
+            <input type="number" min="1" value={repeats} onChange={(e) => setRepeats(Number(e.target.value))} />
+          </label>
+          <label>
+            Label (optional)
+            <input type="text" value={runLabel} onChange={(e) => setRunLabel(e.target.value)} />
+          </label>
+          <button type="button" onClick={handleStartRun} disabled={busy !== null}>
+            Start run
+          </button>
+        </div>
+      </details>
+
+      {busy && (
+        <p className="eval-progress">
+          {busy}: {progress.done}/{progress.total}
+          {progress.failed > 0 && ` (${progress.failed} failed)`}
+        </p>
+      )}
+
+      {error && <div className="error-box">{error}</div>}
+
+      {runs.length === 0 ? (
+        <p>No evaluation runs yet.</p>
+      ) : (
+        <div className="evals-table-wrapper">
+          <table className="evals-table">
+            <thead>
+              <tr>
+                <th />
+                {runs.map((run) => (
+                  <th key={run.id}>
+                    <div>
+                      #{run.id} · {run.pipeline}
+                    </div>
+                    <div className="evals-run-meta">{new Date(run.created_at).toLocaleString()}</div>
+                    <div className="evals-run-meta">{run.status}</div>
+                    <div className="evals-run-meta">
+                      {Object.entries(run.config).map(([k, v]) => `${k}=${v}`).join(", ")}
+                    </div>
+                    {run.label && <div className="evals-run-meta">{run.label}</div>}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {EVAL_METRIC_ROWS.map(({ label, key, format }) => (
+                <tr key={key}>
+                  <th scope="row">{label}</th>
+                  {runs.map((run) => (
+                    <td key={run.id}>{run[key] === null ? "–" : format(run[key])}</td>
+                  ))}
+                </tr>
               ))}
-            </tr>
+              <tr>
+                <th scope="row">Actions</th>
+                {runs.map((run) => (
+                  <td key={run.id} className="evals-actions">
+                    {(run.missing_case_count > 0 || run.failed_count > 0) && (
+                      <button type="button" onClick={() => handleUpdateRun(run.id)} disabled={busy !== null}>
+                        Update run
+                      </button>
+                    )}
+                    <button type="button" onClick={() => handleRescore(run.id)} disabled={busy !== null}>
+                      Re-score
+                    </button>
+                  </td>
+                ))}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <details className="gt-list">
+        <summary>
+          Ground truth cases ({activeCases.length} active
+          {gtCases.length > activeCases.length && `, ${gtCases.length - activeCases.length} outdated`})
+        </summary>
+        <ul>
+          {gtCases.map((c) => (
+            <li key={c.id} className={c.superseded_at ? "gt-outdated" : ""}>
+              <span className="gt-question">
+                #{c.id} {c.question}
+              </span>
+              <span className="gt-meta">
+                {c.superseded_at
+                  ? `outdated${c.superseded_by ? `, replaced by #${c.superseded_by}` : ""}`
+                  : `${c.expected_chunk_count} expected chunk${c.expected_chunk_count === 1 ? "" : "s"}`}
+              </span>
+              {!c.superseded_at && (
+                <button type="button" onClick={() => handleSupersede(c)} disabled={busy !== null}>
+                  Mark outdated
+                </button>
+              )}
+            </li>
           ))}
-        </tbody>
-      </table>
-    </div>
+        </ul>
+      </details>
+    </>
   );
 }
 
@@ -807,11 +1044,6 @@ function AdminScreen() {
   const [syncLoading, setSyncLoading] = useState(false);
   const [syncError, setSyncError] = useState(null);
   const [syncResult, setSyncResult] = useState(null);
-
-  const [evalPhase, setEvalPhase] = useState("idle"); // idle | generating | scoring | done
-  const [evalProgress, setEvalProgress] = useState({ total: 0, done: 0, failed: 0 });
-  const [evalError, setEvalError] = useState(null);
-  const [evalSummary, setEvalSummary] = useState(null);
 
   const handleSync = async () => {
     if (syncLoading) return;
@@ -837,57 +1069,6 @@ function AdminScreen() {
     }
   };
 
-  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-  const startJob = async (url) => {
-    const res = await fetch(`${API_BASE_URL}${url}`, { method: "POST" });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || `Request failed (HTTP ${res.status})`);
-    if (!data.started) throw new Error("That step is already running elsewhere. Try again shortly.");
-  };
-
-  const pollJobUntilDone = async (url) => {
-    while (true) {
-      const res = await fetch(`${API_BASE_URL}${url}`);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || `Request failed (HTTP ${res.status})`);
-      setEvalProgress(data);
-      if (data.status === "done") return;
-      await sleep(1000);
-    }
-  };
-
-  const handleRunEvaluation = async () => {
-    if (evalPhase === "generating" || evalPhase === "scoring") return;
-
-    setEvalError(null);
-    setEvalSummary(null);
-
-    try {
-      setEvalPhase("generating");
-      setEvalProgress({ total: 0, done: 0, failed: 0 });
-      await startJob("/api/evaluation/generate");
-      await pollJobUntilDone("/api/evaluation/generate/status");
-
-      setEvalPhase("scoring");
-      setEvalProgress({ total: 0, done: 0, failed: 0 });
-      await startJob("/api/evaluation/score");
-      await pollJobUntilDone("/api/evaluation/score/status");
-
-      const summaryRes = await fetch(`${API_BASE_URL}/api/evaluation/summary`);
-      const summaryData = await summaryRes.json();
-      if (!summaryRes.ok) throw new Error(summaryData.detail || "Could not fetch summary");
-
-      setEvalSummary(summaryData);
-      setEvalPhase("done");
-    } catch (err) {
-      setEvalError(err.message || "Could not reach the backend. Is it running?");
-      setEvalPhase("idle");
-    }
-  };
-
-  const formatMetric = (value) => (value === null || value === undefined ? "n/a" : value.toFixed(2));
-
   return (
     <div className="admin-panel">
       <p className="admin-description">
@@ -912,50 +1093,6 @@ function AdminScreen() {
               <strong>Failed ({syncResult.failed.length}):</strong> {syncResult.failed.join(", ")}
             </p>
           )}
-        </div>
-      )}
-
-      <hr className="admin-divider" />
-
-      <p className="admin-description">
-        Re-run every ground truth case's question through the current retrieval + answer
-        pipeline, then score faithfulness, correctness, and retrieval recall/precision/F1
-        against the curated expected answer/chunks.
-      </p>
-
-      <button
-        type="button"
-        onClick={handleRunEvaluation}
-        disabled={evalPhase === "generating" || evalPhase === "scoring"}
-      >
-        {evalPhase === "generating" || evalPhase === "scoring" ? "Running..." : "Run Evaluation"}
-      </button>
-
-      {(evalPhase === "generating" || evalPhase === "scoring") && (
-        <div className="sync-result">
-          <p>
-            {evalPhase === "generating" ? "Generating answers" : "Scoring"}: {evalProgress.done}/
-            {evalProgress.total}
-            {evalProgress.failed > 0 && ` (${evalProgress.failed} failed)`}
-          </p>
-        </div>
-      )}
-
-      {evalError && <div className="error-box">{evalError}</div>}
-
-      {evalPhase === "done" && evalSummary && (
-        <div className="sync-result">
-          <p>
-            <strong>{evalSummary.case_count}</strong> case{evalSummary.case_count === 1 ? "" : "s"}{" "}
-            evaluated
-          </p>
-          <ul className="eval-summary-list">
-            <li>Faithfulness: {formatMetric(evalSummary.avg_faithfulness)}</li>
-            <li>Correctness: {formatMetric(evalSummary.avg_correctness)}</li>
-            <li>Retrieval recall: {formatMetric(evalSummary.avg_retrieval_recall)}</li>
-            <li>Retrieval precision: {formatMetric(evalSummary.avg_retrieval_precision)}</li>
-            <li>Retrieval F1: {formatMetric(evalSummary.avg_retrieval_f1)}</li>
-          </ul>
         </div>
       )}
     </div>

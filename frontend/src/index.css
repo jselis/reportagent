@@ -579,3 +579,84 @@ body {
   color: #777;
   word-break: break-word;
 }
+
+.eval-form,
+.gt-list {
+  margin: 0 0 1rem;
+  text-align: left;
+  font-size: 0.85rem;
+}
+
+.eval-form > summary,
+.gt-list > summary {
+  cursor: pointer;
+  color: #555;
+}
+
+.eval-form-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-top: 0.7rem;
+}
+
+.eval-form-fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  color: #555;
+}
+
+.eval-progress {
+  font-size: 0.85rem;
+  color: #555;
+}
+
+.evals-actions button {
+  display: block;
+  margin-bottom: 0.3rem;
+  font-size: 0.75rem;
+  padding: 0.25rem 0.6rem;
+}
+
+.gt-list {
+  margin-top: 1.5rem;
+}
+
+.gt-list ul {
+  list-style: none;
+  padding: 0;
+}
+
+.gt-list li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.8rem;
+  align-items: baseline;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid #e4e4e7;
+}
+
+.gt-question {
+  flex: 1 1 100%;
+}
+
+.gt-meta {
+  font-size: 0.75rem;
+  color: #777;
+}
+
+.gt-list li button {
+  font-size: 0.75rem;
+  padding: 0.2rem 0.6rem;
+}
+
+.gt-outdated .gt-question {
+  text-decoration: line-through;
+  color: #888;
+}
+
+.gt-form select {
+  width: 100%;
+  margin: 0.3rem 0 0.8rem;
+}

@@ -1,3 +1,4 @@
+from functools import partial
 from typing import Callable, TypeVar
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -7,11 +8,16 @@ from app import llm
 from app.agent import run_agent
 from app.config import settings
 from app.documents import extract_pdf_text
-from app.evaluation import get_evaluation_summary, list_eval_runs, run_generation, run_scoring
-from app.ground_truth import create_ground_truth_case
+from app.evaluation import create_eval_run, list_eval_runs, require_eval_run, run_generation, run_scoring
+from app.ground_truth import create_ground_truth_case, list_ground_truth_cases, supersede_ground_truth_case
 from app.jobs import Job
 from app.metadata import list_corpus, sync_pending_metadata, upsert_document_metadata
 from app.models import (
+    ActiveGroundTruthCaseNotFoundError,
+    EvalRunNotFoundError,
+    GroundTruthCaseListResponse,
+    StartEvalRunRequest,
+    StartEvalRunResponse,
     AgentAskResponse,
     AgentDidNotAnswerError,
     CorpusResponse,
@@ -20,7 +26,6 @@ from app.models import (
     AskResponse,
     CreateGroundTruthRequest,
     EvalRunsResponse,
-    EvaluationSummaryResponse,
     ExtractTextResponse,
     GroundTruthCaseResponse,
     IngestRequest,
@@ -156,31 +161,45 @@ def create_ground_truth(request: CreateGroundTruthRequest) -> GroundTruthCaseRes
     if not request.expected_chunks:
         raise HTTPException(status_code=400, detail="select at least one chunk")
 
-    return create_ground_truth_case(request)
+    try:
+        return create_ground_truth_case(request)
+    except ActiveGroundTruthCaseNotFoundError:
+        raise HTTPException(status_code=404, detail="The case to replace doesn't exist or is already outdated.")
+
+
+@app.get("/api/ground-truth", response_model=GroundTruthCaseListResponse)
+def ground_truth_cases() -> GroundTruthCaseListResponse:
+    return GroundTruthCaseListResponse(cases=list_ground_truth_cases())
+
+
+@app.post("/api/ground-truth/{case_id}/supersede", status_code=204)
+def supersede_ground_truth(case_id: int) -> None:
+    try:
+        supersede_ground_truth_case(case_id)
+    except ActiveGroundTruthCaseNotFoundError:
+        raise HTTPException(status_code=404, detail="That case doesn't exist or is already outdated.")
 
 
 _generation_job = Job()
 _scoring_job = Job()
 
 
-@app.post("/api/evaluation/generate", response_model=JobStartResponse)
-def start_generation() -> JobStartResponse:
-    return JobStartResponse(started=_generation_job.start(run_generation))
+def _require_run_or_404(eval_run_id: int) -> None:
+    try:
+        require_eval_run(eval_run_id)
+    except EvalRunNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Evaluation run {eval_run_id} doesn't exist.")
 
 
-@app.get("/api/evaluation/generate/status", response_model=JobStatusResponse)
-def generation_status() -> JobStatusResponse:
-    return JobStatusResponse(**_generation_job.snapshot())
+@app.post("/api/evaluation/runs", response_model=StartEvalRunResponse)
+def start_eval_run(request: StartEvalRunRequest) -> StartEvalRunResponse:
+    """Create a run and start generating its answers in the background."""
+    if _generation_job.snapshot()["status"] == "running":
+        raise HTTPException(status_code=409, detail="A generation job is already running.")
 
-
-@app.post("/api/evaluation/score", response_model=JobStartResponse)
-def start_scoring() -> JobStartResponse:
-    return JobStartResponse(started=_scoring_job.start(run_scoring))
-
-
-@app.get("/api/evaluation/score/status", response_model=JobStatusResponse)
-def scoring_status() -> JobStatusResponse:
-    return JobStatusResponse(**_scoring_job.snapshot())
+    eval_run_id = create_eval_run(request)
+    _generation_job.start(partial(run_generation, eval_run_id=eval_run_id))
+    return StartEvalRunResponse(eval_run_id=eval_run_id)
 
 
 @app.get("/api/evaluation/runs", response_model=EvalRunsResponse)
@@ -188,9 +207,30 @@ def evaluation_runs() -> EvalRunsResponse:
     return EvalRunsResponse(runs=list_eval_runs())
 
 
-@app.get("/api/evaluation/summary", response_model=EvaluationSummaryResponse)
-def evaluation_summary() -> EvaluationSummaryResponse:
-    return get_evaluation_summary()
+@app.post("/api/evaluation/runs/{eval_run_id}/generate", response_model=JobStartResponse)
+def update_eval_run(eval_run_id: int) -> JobStartResponse:
+    """Generate answers for the active cases the run doesn't have a successful result for yet."""
+    _require_run_or_404(eval_run_id)
+    return JobStartResponse(started=_generation_job.start(partial(run_generation, eval_run_id=eval_run_id)))
+
+
+@app.post("/api/evaluation/runs/{eval_run_id}/score", response_model=JobStartResponse)
+def score_eval_run(eval_run_id: int, rescore_all: bool) -> JobStartResponse:
+    """Score a run's answers: only the unscored ones, or all of them with rescore_all."""
+    _require_run_or_404(eval_run_id)
+    return JobStartResponse(
+        started=_scoring_job.start(partial(run_scoring, eval_run_id=eval_run_id, rescore_all=rescore_all))
+    )
+
+
+@app.get("/api/evaluation/generate/status", response_model=JobStatusResponse)
+def generation_status() -> JobStatusResponse:
+    return JobStatusResponse(**_generation_job.snapshot())
+
+
+@app.get("/api/evaluation/score/status", response_model=JobStatusResponse)
+def scoring_status() -> JobStatusResponse:
+    return JobStatusResponse(**_scoring_job.snapshot())
 
 
 @app.post("/api/extract-text", response_model=ExtractTextResponse)

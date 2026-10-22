@@ -81,12 +81,12 @@ def build_answer(grounded: GroundedAnswer, chunks: list[RetrievedChunk]) -> Answ
     return Answer(text=text, sources=sources, confidence=grounded.confidence)
 
 
-def research(question: str) -> tuple[AskResponse, list[RetrievedChunk]]:
-    """Answer a question using only the top-matching document chunks from Pinecone.
+def research(question: str, top_k: int) -> tuple[AskResponse, list[RetrievedChunk]]:
+    """Answer a question using only the top_k best-matching document chunks from Pinecone.
 
     Returns the response alongside the full set of chunks retrieved for it (not just
     the ones the model ended up citing), for callers that need that (e.g. evaluation)."""
-    chunks = retrieve(question, top_k=TOP_K)
+    chunks = retrieve(question, top_k=top_k)
     result = run_llm_request(_build_input(question, chunks), INSTRUCTIONS, GroundedAnswer)
 
     response = AskResponse(
@@ -101,5 +101,5 @@ def research(question: str) -> tuple[AskResponse, list[RetrievedChunk]]:
 
 def research_and_answer(question: str) -> AskResponse:
     """Answer a question using only the top-matching document chunks from Pinecone."""
-    response, _ = research(question)
+    response, _ = research(question, TOP_K)
     return response

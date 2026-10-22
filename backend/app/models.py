@@ -120,13 +120,28 @@ class JobStatusResponse(BaseModel):
     failed: int
 
 
-class EvaluationSummaryResponse(BaseModel):
-    case_count: int
-    avg_faithfulness: float | None
-    avg_correctness: float | None
-    avg_retrieval_recall: float | None
-    avg_retrieval_precision: float | None
-    avg_retrieval_f1: float | None
+class RagEvalConfig(BaseModel):
+    pipeline: Literal["rag"]
+    top_k: int = Field(ge=1)  # chunks retrieved and given to the model
+
+
+class AgentEvalConfig(BaseModel):
+    pipeline: Literal["agent"]
+    max_llm_calls: int = Field(ge=2)  # at least one search and the final answer
+    search_top_k: int = Field(ge=1)  # chunks returned per search
+
+
+EvalPipelineConfig = Annotated[RagEvalConfig | AgentEvalConfig, Field(discriminator="pipeline")]
+
+
+class StartEvalRunRequest(BaseModel):
+    label: str | None
+    repeats: int = Field(ge=1)  # times every case is run, since agent answers vary between runs
+    config: EvalPipelineConfig
+
+
+class StartEvalRunResponse(BaseModel):
+    eval_run_id: int
 
 
 class EvalRunResponse(BaseModel):
@@ -166,6 +181,7 @@ class CreateGroundTruthRequest(BaseModel):
     question: str
     expected_answer: str
     expected_chunks: list[ExpectedChunk]
+    replaces_id: int | None  # id of the active case this one corrects, which is then marked outdated
 
 
 class GroundTruthCaseResponse(BaseModel):
@@ -173,6 +189,20 @@ class GroundTruthCaseResponse(BaseModel):
     question: str
     expected_answer: str
     expected_chunks: list[ExpectedChunk]
+
+
+class GroundTruthCaseListItem(BaseModel):
+    id: int
+    question: str
+    expected_answer: str
+    expected_chunk_count: int
+    created_at: datetime
+    superseded_at: datetime | None
+    superseded_by: int | None
+
+
+class GroundTruthCaseListResponse(BaseModel):
+    cases: list[GroundTruthCaseListItem]
 
 
 class RetrievedChunk(BaseModel):
@@ -228,6 +258,14 @@ class LLMResult:
     response_time_seconds: float
     ttft_seconds: float | None
     raw_output: str | None = None
+
+
+class EvalRunNotFoundError(Exception):
+    """Raised when an evaluation run id doesn't exist."""
+
+
+class ActiveGroundTruthCaseNotFoundError(Exception):
+    """Raised when a ground truth case id doesn't exist or is already outdated."""
 
 
 class ResearchError(Exception):
