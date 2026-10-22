@@ -35,6 +35,21 @@ function formatResult(mode, data) {
   return "";
 }
 
+function InspectionMetrics({ ttft, responseTime }) {
+  return (
+    <div className="metrics">
+      <div className="metric-box">
+        <label>TTFT (s)</label>
+        <input type="text" readOnly value={ttft !== null ? ttft.toFixed(1) : ""} />
+      </div>
+      <div className="metric-box">
+        <label>Total response time (s)</label>
+        <input type="text" readOnly value={responseTime !== null ? responseTime.toFixed(1) : ""} />
+      </div>
+    </div>
+  );
+}
+
 function QueryScreen() {
   const [mode, setMode] = useState("ask");
   const [inputText, setInputText] = useState("");
@@ -245,71 +260,55 @@ function QueryScreen() {
             ))}
           </ol>
         )}
-
-        <div className="metrics">
-          <div className="metric-box">
-            <label htmlFor="ttft-box">TTFT (s)</label>
-            <input
-              id="ttft-box"
-              type="text"
-              readOnly
-              value={ttft !== null ? ttft.toFixed(1) : ""}
-            />
-          </div>
-          <div className="metric-box">
-            <label htmlFor="total-time-box">Total response time (s)</label>
-            <input
-              id="total-time-box"
-              type="text"
-              readOnly
-              value={responseTime !== null ? responseTime.toFixed(1) : ""}
-            />
-          </div>
-        </div>
       </div>
 
-      {mode === "ask" && chunks.length > 0 && (
-        <div className="chunk-browser">
-          <label>Retrieved chunks ({chunks.length}) — select the ones that support the answer</label>
-          <ul className="chunk-list">
-            {chunks.map((chunk) => (
-              <li key={chunk.id}>
-                <label className="chunk-item">
-                  <input
-                    type="checkbox"
-                    checked={selectedChunkIds.has(chunk.id)}
-                    onChange={() => toggleChunkSelected(chunk.id)}
-                  />
-                  <span className="chunk-meta">
-                    {chunk.id} (score {chunk.score.toFixed(2)}
-                    {chunk.topic ? `, ${chunk.topic}` : ""})
-                  </span>
-                  <span className="chunk-text">{chunk.text}</span>
-                </label>
-              </li>
-            ))}
-          </ul>
+      <details className="inspection-panel">
+        <summary>Inspection</summary>
+        <InspectionMetrics ttft={ttft} responseTime={responseTime} />
 
-          {selectedChunkIds.size > 0 && (
-            <div className="gt-form">
-              <label htmlFor="gt-answer">Expected answer for this ground truth case</label>
-              <textarea
-                id="gt-answer"
-                rows={4}
-                value={gtAnswer}
-                onChange={(e) => setGtAnswer(e.target.value)}
-              />
-              <button type="button" onClick={handleSaveGroundTruth} disabled={gtSaving}>
-                {gtSaving ? "Saving..." : "Save Ground Truth Case"}
-              </button>
-              {gtError && <div className="error-box">{gtError}</div>}
-              {gtSavedId !== null && (
-                <div className="success-box">Saved as ground truth case #{gtSavedId}.</div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
+        {mode === "ask" && chunks.length > 0 && (
+          <div className="chunk-browser">
+            <label>Retrieved chunks ({chunks.length}) — select the ones that support the answer</label>
+            <ul className="chunk-list">
+              {chunks.map((chunk) => (
+                <li key={chunk.id}>
+                  <label className="chunk-item">
+                    <input
+                      type="checkbox"
+                      checked={selectedChunkIds.has(chunk.id)}
+                      onChange={() => toggleChunkSelected(chunk.id)}
+                    />
+                    <span className="chunk-meta">
+                      {chunk.id} (score {chunk.score.toFixed(2)}
+                      {chunk.topic ? `, ${chunk.topic}` : ""})
+                    </span>
+                    <span className="chunk-text">{chunk.text}</span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+
+            {selectedChunkIds.size > 0 && (
+              <div className="gt-form">
+                <label htmlFor="gt-answer">Expected answer for this ground truth case</label>
+                <textarea
+                  id="gt-answer"
+                  rows={4}
+                  value={gtAnswer}
+                  onChange={(e) => setGtAnswer(e.target.value)}
+                />
+                <button type="button" onClick={handleSaveGroundTruth} disabled={gtSaving}>
+                  {gtSaving ? "Saving..." : "Save Ground Truth Case"}
+                </button>
+                {gtError && <div className="error-box">{gtError}</div>}
+                {gtSavedId !== null && (
+                  <div className="success-box">Saved as ground truth case #{gtSavedId}.</div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </details>
     </>
   );
 }
@@ -576,6 +575,109 @@ function IngestScreen() {
   );
 }
 
+function AgentScreen() {
+  const [question, setQuestion] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [answer, setAnswer] = useState("");
+  const [sources, setSources] = useState([]);
+  const [steps, setSteps] = useState([]);
+  const [ttft, setTtft] = useState(null);
+  const [responseTime, setResponseTime] = useState(null);
+  const [error, setError] = useState(null);
+
+  const handleSubmit = async () => {
+    if (!question.trim() || loading) return;
+
+    setLoading(true);
+    setError(null);
+    setAnswer("");
+    setSources([]);
+    setSteps([]);
+    setTtft(null);
+    setResponseTime(null);
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/agent/ask`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        setError(data.detail || `Request failed (HTTP ${res.status})`);
+        return;
+      }
+
+      setAnswer(data.answer.text);
+      setSources(data.answer.sources);
+      setSteps(data.steps);
+      setTtft(data.ttft_seconds);
+      setResponseTime(data.response_time_seconds);
+    } catch (err) {
+      setError("Could not reach the backend. Is it running?");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <>
+      <div className="ask-bar">
+        <input
+          type="text"
+          placeholder="Ask the agent a question..."
+          value={question}
+          onChange={(e) => setQuestion(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+        />
+        <button type="button" onClick={handleSubmit} disabled={loading}>
+          {loading ? "Waiting for the agent..." : "Submit"}
+        </button>
+      </div>
+
+      {error && <div className="error-box">{error}</div>}
+
+      <div className="result">
+        <label htmlFor="agent-answer-box">Answer</label>
+        <textarea id="agent-answer-box" readOnly rows={6} value={answer} />
+
+        {sources.length > 0 && (
+          <ol className="sources-list">
+            {sources.map((source, i) => (
+              <li key={i}>
+                <span className="source-id">
+                  {source.document_id} (chunk {source.chunk_id})
+                </span>
+                <span className="source-snippet"> — {source.snippet}</span>
+              </li>
+            ))}
+          </ol>
+        )}
+      </div>
+
+      <details className="inspection-panel">
+        <summary>Inspection</summary>
+        <InspectionMetrics ttft={ttft} responseTime={responseTime} />
+
+        {steps.length > 0 && (
+          <div className="agent-steps">
+            <label>Agent steps ({steps.length})</label>
+            <ol className="sources-list">
+              {steps.map((step, i) => (
+                <li key={i}>
+                  <span className="source-id">{step.tool}</span>
+                  <span className="source-snippet"> — {JSON.stringify(step.arguments)}</span>
+                </li>
+              ))}
+            </ol>
+          </div>
+        )}
+      </details>
+    </>
+  );
+}
+
 function formatDate(iso) {
   return iso ? new Date(iso).toLocaleString() : "never";
 }
@@ -819,6 +921,13 @@ function App() {
         </button>
         <button
           type="button"
+          className={screen === "agent" ? "active" : ""}
+          onClick={() => setScreen("agent")}
+        >
+          Agent
+        </button>
+        <button
+          type="button"
           className={screen === "admin" ? "active" : ""}
           onClick={() => setScreen("admin")}
         >
@@ -828,6 +937,7 @@ function App() {
 
       {screen === "query" && <QueryScreen />}
       {screen === "ingest" && <IngestScreen />}
+      {screen === "agent" && <AgentScreen />}
       {screen === "corpus" && <CorpusScreen />}
       {screen === "admin" && <AdminScreen />}
     </div>

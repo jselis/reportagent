@@ -245,12 +245,6 @@ body {
   text-align: left;
 }
 
-.chunk-browser > label {
-  display: block;
-  font-size: 0.85rem;
-  color: #555;
-  margin-bottom: 0.5rem;
-}
 
 .chunk-list {
   list-style: none;
@@ -492,3 +486,56 @@ body {
 .corpus-tree li.sync-needed { background: #f59e0b; color: #1a1a1a; }
 .corpus-doc-id { word-break: break-all; }
 .corpus-dates { font-size: 0.85em; opacity: 0.8; }
+
+.inspection-panel {
+  margin-top: 1.5rem;
+  padding: 0.3rem 0.9rem;
+  text-align: left;
+  background: transparent;
+  color: #d4d4d8;
+  border: 1px dashed #d4d4d8;
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+}
+
+.inspection-panel > summary {
+  cursor: pointer;
+  color: #b4b4bb;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 0.7rem;
+}
+
+.inspection-panel[open] {
+  padding: 0.6rem 0.9rem;
+  background: #1e1e24;
+  border-color: #71717a;
+}
+
+.inspection-panel[open] > summary {
+  color: #a1a1aa;
+  font-size: 0.8rem;
+  margin-bottom: 0.8rem;
+}
+
+.inspection-panel label,
+.inspection-panel .sources-list,
+.inspection-panel .sources-list li::before,
+.inspection-panel .source-id,
+.inspection-panel .chunk-meta {
+  color: #d4d4d8;
+}
+
+.inspection-panel input[type="text"],
+.inspection-panel textarea {
+  background: #2a2a32;
+  color: #d4d4d8;
+  border-color: #52525b;
+}
+
+.inspection-panel .chunk-browser > label,
+.inspection-panel .agent-steps > label {
+  display: block;
+  margin: 1rem 0 0.5rem;
+}
