@@ -10,7 +10,7 @@ def create_ground_truth_case(request: CreateGroundTruthRequest) -> GroundTruthCa
         with conn, conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO ground_truth_cases (question, expected_answer, expected_chunks)
+                INSERT INTO gt_case (question, expected_answer, expected_chunks)
                 VALUES (%s, %s, %s)
                 RETURNING id
                 """,

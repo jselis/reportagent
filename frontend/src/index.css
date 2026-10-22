@@ -539,3 +539,43 @@ body {
   display: block;
   margin: 1rem 0 0.5rem;
 }
+
+.evals-table-wrapper {
+  overflow-x: auto;
+  text-align: left;
+}
+
+.evals-table {
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  min-width: 100%;
+}
+
+.evals-table th,
+.evals-table td {
+  padding: 0.4rem 0.7rem;
+  border-bottom: 1px solid #e4e4e7;
+  vertical-align: top;
+}
+
+.evals-table thead th {
+  text-align: left;
+  min-width: 9rem;
+}
+
+.evals-table tbody th {
+  font-weight: 500;
+  color: #555;
+  white-space: nowrap;
+}
+
+.evals-table td {
+  font-variant-numeric: tabular-nums;
+}
+
+.evals-run-meta {
+  font-weight: 400;
+  font-size: 0.75rem;
+  color: #777;
+  word-break: break-word;
+}

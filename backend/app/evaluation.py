@@ -3,7 +3,12 @@ from psycopg2.extras import Json
 from app.db import get_connection
 from app.jobs import Job
 from app.llm import run_llm_request
-from app.models import CorrectnessJudgement, EvaluationSummaryResponse, FaithfulnessJudgement
+from app.models import (
+    CorrectnessJudgement,
+    EvalRunResponse,
+    EvaluationSummaryResponse,
+    FaithfulnessJudgement,
+)
 from app.research import research
 
 FAITHFULNESS_INSTRUCTIONS = """You assess whether an AI-generated answer is faithful to the document chunks it was based on.
@@ -26,7 +31,7 @@ def run_generation(job: Job) -> None:
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT id, question FROM ground_truth_cases")
+            cur.execute("SELECT id, question FROM gt_case")
             cases = cur.fetchall()
         job.set_total(len(cases))
 
@@ -38,7 +43,7 @@ def run_generation(job: Job) -> None:
                 with conn, conn.cursor() as cur:
                     cur.execute(
                         """
-                        UPDATE ground_truth_cases
+                        UPDATE gt_case
                         SET actual_answer = %s, actual_chunks = %s
                         WHERE id = %s
                         """,
@@ -95,7 +100,7 @@ def run_scoring(job: Job) -> None:
             cur.execute(
                 """
                 SELECT id, question, expected_answer, expected_chunks, actual_answer, actual_chunks
-                FROM ground_truth_cases
+                FROM gt_case
                 WHERE actual_answer IS NOT NULL AND actual_chunks IS NOT NULL
                 """
             )
@@ -111,7 +116,7 @@ def run_scoring(job: Job) -> None:
                 with conn, conn.cursor() as cur:
                     cur.execute(
                         """
-                        UPDATE ground_truth_cases
+                        UPDATE gt_case
                         SET faithfulness = %s, correctness = %s,
                             retrieval_recall = %s, retrieval_precision = %s, retrieval_f1 = %s
                         WHERE id = %s
@@ -135,7 +140,7 @@ def get_evaluation_summary() -> EvaluationSummaryResponse:
                     count(*),
                     avg(faithfulness), avg(correctness),
                     avg(retrieval_recall), avg(retrieval_precision), avg(retrieval_f1)
-                FROM ground_truth_cases
+                FROM gt_case
                 """
             )
             count, avg_f, avg_c, avg_r, avg_p, avg_f1 = cur.fetchone()
@@ -150,3 +155,27 @@ def get_evaluation_summary() -> EvaluationSummaryResponse:
         avg_retrieval_precision=avg_p,
         avg_retrieval_f1=avg_f1,
     )
+
+
+def list_eval_runs() -> list[EvalRunResponse]:
+    """All evaluation runs, newest first, with aggregates from the eval_run_summary_vw view."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT r.id, r.created_at, r.label, r.pipeline, r.config, r.status, r.judge_model, r.scored_at,
+                       s.case_count, s.failed_count, s.missing_case_count,
+                       s.avg_faithfulness, s.avg_correctness,
+                       s.avg_retrieval_recall, s.avg_retrieval_precision, s.avg_retrieval_f1,
+                       s.avg_tokens_used, s.avg_response_time_seconds, s.avg_searches
+                FROM eval_run r
+                JOIN eval_run_summary_vw s ON s.eval_run_id = r.id
+                ORDER BY r.created_at DESC, r.id DESC
+                """
+            )
+            columns = [d[0] for d in cur.description]
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+    return [EvalRunResponse(**dict(zip(columns, row))) for row in rows]

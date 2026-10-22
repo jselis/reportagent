@@ -7,7 +7,7 @@ from app import llm
 from app.agent import run_agent
 from app.config import settings
 from app.documents import extract_pdf_text
-from app.evaluation import get_evaluation_summary, run_generation, run_scoring
+from app.evaluation import get_evaluation_summary, list_eval_runs, run_generation, run_scoring
 from app.ground_truth import create_ground_truth_case
 from app.jobs import Job
 from app.metadata import list_corpus, sync_pending_metadata, upsert_document_metadata
@@ -19,6 +19,7 @@ from app.models import (
     AskRequest,
     AskResponse,
     CreateGroundTruthRequest,
+    EvalRunsResponse,
     EvaluationSummaryResponse,
     ExtractTextResponse,
     GroundTruthCaseResponse,
@@ -180,6 +181,11 @@ def start_scoring() -> JobStartResponse:
 @app.get("/api/evaluation/score/status", response_model=JobStatusResponse)
 def scoring_status() -> JobStatusResponse:
     return JobStatusResponse(**_scoring_job.snapshot())
+
+
+@app.get("/api/evaluation/runs", response_model=EvalRunsResponse)
+def evaluation_runs() -> EvalRunsResponse:
+    return EvalRunsResponse(runs=list_eval_runs())
 
 
 @app.get("/api/evaluation/summary", response_model=EvaluationSummaryResponse)

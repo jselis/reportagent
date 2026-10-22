@@ -731,6 +731,78 @@ function CorpusScreen() {
   );
 }
 
+const EVAL_METRIC_ROWS = [
+  { label: "Cases", key: "case_count", format: (v) => v },
+  { label: "Missing cases", key: "missing_case_count", format: (v) => v },
+  { label: "Failed", key: "failed_count", format: (v) => v },
+  { label: "Faithfulness", key: "avg_faithfulness", format: (v) => v.toFixed(2) },
+  { label: "Correctness", key: "avg_correctness", format: (v) => v.toFixed(2) },
+  { label: "Retrieval recall", key: "avg_retrieval_recall", format: (v) => v.toFixed(2) },
+  { label: "Retrieval precision", key: "avg_retrieval_precision", format: (v) => v.toFixed(2) },
+  { label: "Retrieval F1", key: "avg_retrieval_f1", format: (v) => v.toFixed(2) },
+  { label: "Avg tokens", key: "avg_tokens_used", format: (v) => Math.round(v) },
+  { label: "Avg response time (s)", key: "avg_response_time_seconds", format: (v) => v.toFixed(1) },
+  { label: "Avg searches", key: "avg_searches", format: (v) => v.toFixed(1) },
+];
+
+function EvalsScreen() {
+  const [runs, setRuns] = useState(null);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/evaluation/runs`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Failed to load evaluation runs.");
+        setRuns(data.runs);
+      } catch (err) {
+        setError(err.message);
+      }
+    };
+    load();
+  }, []);
+
+  if (error) return <div className="error-box">{error}</div>;
+  if (!runs) return <p>Loading…</p>;
+  if (runs.length === 0) return <p>No evaluation runs yet.</p>;
+
+  return (
+    <div className="evals-table-wrapper">
+      <table className="evals-table">
+        <thead>
+          <tr>
+            <th />
+            {runs.map((run) => (
+              <th key={run.id}>
+                <div>
+                  #{run.id} · {run.pipeline}
+                </div>
+                <div className="evals-run-meta">{new Date(run.created_at).toLocaleString()}</div>
+                <div className="evals-run-meta">{run.status}</div>
+                <div className="evals-run-meta">
+                  {Object.entries(run.config).map(([k, v]) => `${k}=${v}`).join(", ")}
+                </div>
+                {run.label && <div className="evals-run-meta">{run.label}</div>}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {EVAL_METRIC_ROWS.map(({ label, key, format }) => (
+            <tr key={key}>
+              <th scope="row">{label}</th>
+              {runs.map((run) => (
+                <td key={run.id}>{run[key] === null ? "–" : format(run[key])}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function AdminScreen() {
   const [syncLoading, setSyncLoading] = useState(false);
   const [syncError, setSyncError] = useState(null);
@@ -928,6 +1000,13 @@ function App() {
         </button>
         <button
           type="button"
+          className={screen === "evals" ? "active" : ""}
+          onClick={() => setScreen("evals")}
+        >
+          Evals
+        </button>
+        <button
+          type="button"
           className={screen === "admin" ? "active" : ""}
           onClick={() => setScreen("admin")}
         >
@@ -939,6 +1018,7 @@ function App() {
       {screen === "ingest" && <IngestScreen />}
       {screen === "agent" && <AgentScreen />}
       {screen === "corpus" && <CorpusScreen />}
+      {screen === "evals" && <EvalsScreen />}
       {screen === "admin" && <AdminScreen />}
     </div>
   );

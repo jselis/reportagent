@@ -129,6 +129,34 @@ class EvaluationSummaryResponse(BaseModel):
     avg_retrieval_f1: float | None
 
 
+class EvalRunResponse(BaseModel):
+    """One evaluation run with its aggregates over the currently active ground truth cases."""
+
+    id: int
+    created_at: datetime
+    label: str | None
+    pipeline: Literal["rag", "agent"]
+    config: dict
+    status: Literal["generating", "generated", "scoring", "scored", "failed"]
+    judge_model: str | None
+    scored_at: datetime | None
+    case_count: int
+    failed_count: int
+    missing_case_count: int  # active cases that have no result in this run yet
+    avg_faithfulness: float | None
+    avg_correctness: float | None
+    avg_retrieval_recall: float | None
+    avg_retrieval_precision: float | None
+    avg_retrieval_f1: float | None
+    avg_tokens_used: float | None
+    avg_response_time_seconds: float | None
+    avg_searches: float | None
+
+
+class EvalRunsResponse(BaseModel):
+    runs: list[EvalRunResponse]
+
+
 class ExpectedChunk(BaseModel):
     chunk_id: str
     chunk: str
