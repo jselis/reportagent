@@ -3,6 +3,8 @@ import time
 from dataclasses import dataclass, field
 
 import openai
+
+from app import tracing  # sets up tracing; must be imported before google.adk is used
 from google.adk.agents import Agent
 from google.adk.agents.invocation_context import LlmCallsLimitExceededError
 from google.adk.agents.run_config import RunConfig
@@ -136,13 +138,16 @@ class AgentRun:
     selected_chunks: list[RetrievedChunk]  # the chunks the final answer cites
 
 
-def run_agent_with_chunks(question: str, max_llm_calls: int, search_top_k: int) -> AgentRun:
+def run_agent_with_chunks(
+    question: str, max_llm_calls: int, search_top_k: int, trace: tracing.TraceAttributes
+) -> AgentRun:
     """Answer a question with an agent that searches the documents as often as it needs."""
     state = _RunState()
     start = time.perf_counter()
 
     try:
-        tokens_used = asyncio.run(_run(question, state, max_llm_calls, search_top_k))
+        with tracing.trace_attributes(trace):
+            tokens_used = asyncio.run(_run(question, state, max_llm_calls, search_top_k))
     except LlmCallsLimitExceededError as exc:
         raise AgentDidNotAnswerError(f"The agent used all {max_llm_calls} allowed LLM calls") from exc
     except openai.APITimeoutError as exc:
@@ -173,4 +178,7 @@ def run_agent_with_chunks(question: str, max_llm_calls: int, search_top_k: int) 
 
 def run_agent(question: str) -> AgentAskResponse:
     """The Agent tab's entry point: the agent with this module's default settings."""
-    return run_agent_with_chunks(question, MAX_LLM_CALLS, TOP_K).response
+    trace = tracing.TraceAttributes(
+        name="agent-ask", environment="interactive", tags=["interactive"], metadata={}
+    )
+    return run_agent_with_chunks(question, MAX_LLM_CALLS, TOP_K, trace).response

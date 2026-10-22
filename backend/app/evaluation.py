@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 from psycopg2.extras import Json
 
-from app import agent, llm
+from app import agent, llm, tracing
 from app.db import get_connection
 from app.jobs import Job
 from app.llm import run_llm_request
@@ -42,7 +42,9 @@ class _Generated:
     n_searches: int | None
 
 
-def _generate_one(pipeline: str, config: dict, question: str) -> _Generated:
+def _generate_one(
+    pipeline: str, config: dict, question: str, trace: tracing.TraceAttributes
+) -> _Generated:
     if pipeline == "rag":
         response, chunks = research(question, config["top_k"])
         # Plain RAG feeds the top-k to the model and treats all of them as selected.
@@ -55,7 +57,9 @@ def _generate_one(pipeline: str, config: dict, question: str) -> _Generated:
             n_searches=None,
         )
     if pipeline == "agent":
-        run = agent.run_agent_with_chunks(question, config["max_llm_calls"], config["search_top_k"])
+        run = agent.run_agent_with_chunks(
+            question, config["max_llm_calls"], config["search_top_k"], trace
+        )
         return _Generated(
             answer=run.response.answer.text,
             fed_chunks=run.fed_chunks,
@@ -146,7 +150,19 @@ def run_generation(job: Job, eval_run_id: int) -> None:
 
             for case_id, question, repeat_index in todo:
                 try:
-                    generated = _generate_one(pipeline, config, question)
+                    trace = tracing.TraceAttributes(
+                        name="agent-eval",
+                        environment="evaluation",
+                        tags=["evaluation", f"eval-run-{eval_run_id}"],
+                        metadata={
+                            "eval_run_id": str(eval_run_id),
+                            "gt_case_id": str(case_id),
+                            "repeat_index": str(repeat_index),
+                            "max_llm_calls": str(config.get("max_llm_calls")),
+                            "search_top_k": str(config.get("search_top_k")),
+                        },
+                    )
+                    generated = _generate_one(pipeline, config, question, trace)
                     row = (
                         "ok", None, generated.answer,
                         _chunks_json(generated.fed_chunks), _chunks_json(generated.selected_chunks),
