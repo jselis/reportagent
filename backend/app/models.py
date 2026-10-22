@@ -172,6 +172,17 @@ class AskResponse(LLMResponseMeta):
     answer: Answer
 
 
+class AgentStep(BaseModel):
+    """One tool call the agent made, for the inspection view."""
+
+    tool: str
+    arguments: dict
+
+
+class AgentAskResponse(AskResponse):
+    steps: list[AgentStep]
+
+
 class SummarizeResponse(LLMResponseMeta):
     summary: Summary
 
@@ -201,6 +212,10 @@ class ResearchTimeoutError(ResearchError):
 
 class ResearchConnectionError(ResearchError):
     """Raised when the OpenAI call fails to even establish a connection."""
+
+
+class AgentDidNotAnswerError(ResearchError):
+    """Raised when the agent run ends without a valid submit_answer call."""
 
 
 class ResearchAPIError(ResearchError):

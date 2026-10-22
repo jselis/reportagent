@@ -4,6 +4,7 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import llm
+from app.agent import run_agent
 from app.config import settings
 from app.documents import extract_pdf_text
 from app.evaluation import get_evaluation_summary, run_generation, run_scoring
@@ -11,6 +12,8 @@ from app.ground_truth import create_ground_truth_case
 from app.jobs import Job
 from app.metadata import list_corpus, sync_pending_metadata, upsert_document_metadata
 from app.models import (
+    AgentAskResponse,
+    AgentDidNotAnswerError,
     CorpusResponse,
     AnalyzeSentimentRequest,
     AskRequest,
@@ -68,6 +71,11 @@ def _run_or_raise_http(fn: Callable[..., T], *args) -> T:
             status_code=503,
             detail="The research service is currently unreachable. Please try again shortly.",
         )
+    except AgentDidNotAnswerError:
+        raise HTTPException(
+            status_code=502,
+            detail="The agent did not produce a valid answer, possibly because it ran out of search steps. Try rephrasing the question.",
+        )
     except ResearchAPIError as exc:
         raise HTTPException(
             status_code=exc.status_code,
@@ -81,6 +89,14 @@ def ask(request: AskRequest) -> AskResponse:
         raise HTTPException(status_code=400, detail="question must not be empty")
 
     return _run_or_raise_http(research_and_answer, request.question)
+
+
+@app.post("/api/agent/ask", response_model=AgentAskResponse)
+def agent_ask(request: AskRequest) -> AgentAskResponse:
+    if not request.question.strip():
+        raise HTTPException(status_code=400, detail="question must not be empty")
+
+    return _run_or_raise_http(run_agent, request.question)
 
 
 @app.post("/api/summarize", response_model=SummarizeResponse)

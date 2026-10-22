@@ -49,7 +49,7 @@ def _snippet(chunk: RetrievedChunk, quote: str) -> str:
     return _normalize(chunk.text)[:SNIPPET_FALLBACK_CHARS]
 
 
-def _build_answer(grounded: GroundedAnswer, chunks: list[RetrievedChunk]) -> Answer:
+def build_answer(grounded: GroundedAnswer, chunks: list[RetrievedChunk]) -> Answer:
     """Replace the chunk ids the model wrote in the text (e.g. [2-1]) by 1-based
     numbers in order of first appearance, and build `sources` in that same order.
     Deterministic: [n] always matches sources[n-1], each carrying its real index id."""
@@ -90,7 +90,7 @@ def research(question: str) -> tuple[AskResponse, list[RetrievedChunk]]:
     result = run_llm_request(_build_input(question, chunks), INSTRUCTIONS, GroundedAnswer)
 
     response = AskResponse(
-        answer=_build_answer(result.parsed, chunks),
+        answer=build_answer(result.parsed, chunks),
         tokens_used=result.tokens_used,
         response_time_seconds=result.response_time_seconds,
         ttft_seconds=result.ttft_seconds,
