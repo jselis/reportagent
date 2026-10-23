@@ -685,7 +685,7 @@ function IngestScreen() {
   );
 }
 
-function AgentScreen({ loadRequest }) {
+function AgentScreen({ loadRequest, deletedChat }) {
   const [question, setQuestion] = useState("");
   const [sessionId, setSessionId] = useState(null); // the chat being continued; null before the first question
   const [turns, setTurns] = useState([]); // [{question, answer}]
@@ -716,8 +716,12 @@ function AgentScreen({ loadRequest }) {
     gt.reset(lastTurn.question, lastTurn.response.answer.text);
   }, [loadRequest]);
 
-  const handleNewChat = () => {
-    if (loading) return;
+  // The chat shown here was deleted in the Sessions tab: continuing it would fail, so start fresh.
+  useEffect(() => {
+    if (deletedChat && deletedChat.id === sessionId) resetChat();
+  }, [deletedChat]);
+
+  const resetChat = () => {
     setSessionId(null);
     setTurns([]);
     setSources([]);
@@ -726,6 +730,10 @@ function AgentScreen({ loadRequest }) {
     setResponseTime(null);
     setError(null);
     gt.reset();
+  };
+
+  const handleNewChat = () => {
+    if (!loading) resetChat();
   };
 
   const handleSubmit = async () => {
@@ -837,7 +845,7 @@ function AgentScreen({ loadRequest }) {
   );
 }
 
-function SessionsScreen({ onOpen }) {
+function SessionsScreen({ onOpen, onDeleted }) {
   const [sessions, setSessions] = useState(null);
   const [error, setError] = useState(null);
   const [openingId, setOpeningId] = useState(null);
@@ -866,6 +874,19 @@ function SessionsScreen({ onOpen }) {
     }
   };
 
+  const handleDelete = async (session) => {
+    if (openingId) return;
+    if (!window.confirm(`Delete the chat "${session.title}"? This cannot be undone.`)) return;
+    setError(null);
+    try {
+      await apiJson(`/api/agent/sessions/${session.id}`, { method: "DELETE" });
+      setSessions((prev) => prev.filter((s) => s.id !== session.id));
+      onDeleted(session.id);
+    } catch (err) {
+      setError(err.message || "Could not reach the backend. Is it running?");
+    }
+  };
+
   if (!sessions) return error ? <div className="error-box">{error}</div> : <p>Loading…</p>;
 
   return (
@@ -876,7 +897,7 @@ function SessionsScreen({ onOpen }) {
       ) : (
         <ul className="session-list">
           {sessions.map((session) => (
-            <li key={session.id}>
+            <li key={session.id} className="session-row">
               <button
                 type="button"
                 className="session-item"
@@ -888,6 +909,14 @@ function SessionsScreen({ onOpen }) {
                   {session.turn_count} question{session.turn_count === 1 ? "" : "s"} · last active{" "}
                   {new Date(session.updated_at).toLocaleString()}
                 </span>
+              </button>
+              <button
+                type="button"
+                className="session-delete"
+                onClick={() => handleDelete(session)}
+                disabled={openingId !== null}
+              >
+                Delete
               </button>
             </li>
           ))}
@@ -1269,6 +1298,7 @@ function AdminScreen() {
 function App() {
   const [screen, setScreen] = useState("ingest");
   const [agentLoad, setAgentLoad] = useState(null); // a past chat the Agent tab should show
+  const [deletedChat, setDeletedChat] = useState(null); // a chat just deleted in the Sessions tab
 
   const handleOpenSession = (session) => {
     setAgentLoad({ session });
@@ -1335,9 +1365,9 @@ function App() {
       {screen === "ingest" && <IngestScreen />}
       {/* The Agent tab stays mounted, so its chat survives switching tabs. */}
       <div style={{ display: screen === "agent" ? "block" : "none" }}>
-        <AgentScreen loadRequest={agentLoad} />
+        <AgentScreen loadRequest={agentLoad} deletedChat={deletedChat} />
       </div>
-      {screen === "sessions" && <SessionsScreen onOpen={handleOpenSession} />}
+      {screen === "sessions" && <SessionsScreen onOpen={handleOpenSession} onDeleted={(id) => setDeletedChat({ id })} />}
       {screen === "corpus" && <CorpusScreen />}
       {screen === "evals" && <EvalsScreen />}
       {screen === "admin" && <AdminScreen />}

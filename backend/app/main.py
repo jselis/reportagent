@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import llm
 from app.agent import run_agent
-from app.chat_history import get_agent_session, list_agent_sessions
+from app.chat_history import delete_agent_session, get_agent_session, list_agent_sessions
 from app.config import settings
 from app.documents import extract_pdf_text
 from app.evaluation import create_eval_run, list_eval_runs, require_eval_run, run_generation, run_scoring
@@ -122,6 +122,14 @@ def agent_sessions() -> AgentSessionListResponse:
 def agent_session(session_id: str) -> AgentSessionResponse:
     try:
         return get_agent_session(session_id)
+    except AgentSessionNotFoundError:
+        raise HTTPException(status_code=404, detail="That chat doesn't exist.")
+
+
+@app.delete("/api/agent/sessions/{session_id}", status_code=204)
+def delete_session(session_id: str) -> None:
+    try:
+        delete_agent_session(session_id)
     except AgentSessionNotFoundError:
         raise HTTPException(status_code=404, detail="That chat doesn't exist.")
 

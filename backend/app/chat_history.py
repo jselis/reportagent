@@ -54,3 +54,18 @@ def get_agent_session(session_id: str) -> AgentSessionResponse:
         session_id=session_id,
         turns=[AgentSessionTurn(**turn) for turn in row[0].get(TURNS_KEY, [])],
     )
+
+
+def delete_agent_session(session_id: str) -> None:
+    """Delete a chat with its history (its events go with it)."""
+    conn = get_connection()
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM chat_session WHERE id = %s AND app_name = %s AND user_id = %s",
+                (session_id, APP_NAME, USER_ID),
+            )
+            if cur.rowcount == 0:
+                raise AgentSessionNotFoundError(session_id)
+    finally:
+        conn.close()
