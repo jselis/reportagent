@@ -67,7 +67,7 @@ Rules for the answer:
 - If the chunks do not contain the answer, say clearly in `text` that the answer is not in the relevant matches in the documents. In that case pass no citations and put no reference markers in the text. Use a low confidence.
 - Otherwise, answer directly and concisely, in the language of the question.
 - Right after each statement that comes from a chunk, put that chunk's exact id in square brackets, copied from the tool result, e.g. "The tower is 330 meters tall. [some-document-3]". If a statement is supported by several chunks, use one bracket per id, e.g. [doc-a-0][doc-b-2]. Always write the chunk id, never a number: the numbers you may see in the interface are not ids. Never invent ids.
-- In `citations`, list each distinct chunk you used, once: `source_id` is the chunk's id copied exactly, and `quote` is the shortest verbatim excerpt (one or two sentences, copied exactly) from that chunk that supports your statement.
+- In `citations`, list each distinct chunk you used, once: `source_id` is the chunk's id copied exactly, and `quote` is a short verbatim excerpt (copied exactly) from that chunk that supports your statement. Keep only the passages that matter: you may skip irrelevant stretches with "...", e.g. "The tower was designed by Gustave Eiffel ... and is 330 meters tall". Every part between the "..." must be copied exactly, in the original order.
 - Set `confidence` to how well the chunks support your answer."""
 
 
