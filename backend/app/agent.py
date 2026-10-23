@@ -1,12 +1,14 @@
 import asyncio
 import time
 from dataclasses import dataclass, field
+from typing import get_args
 
 import openai
 
 from app import tracing  # sets up tracing; must be imported before google.adk is used
 from google.adk.agents import Agent
 from google.adk.agents.invocation_context import LlmCallsLimitExceededError
+from google.adk.agents.readonly_context import ReadonlyContext
 from google.adk.agents.run_config import RunConfig
 from google.adk.events import Event, EventActions
 from google.adk.models.lite_llm import LiteLlm
@@ -32,10 +34,13 @@ from app.models import (
     ResearchConnectionError,
     ResearchTimeoutError,
     RetrievedChunk,
+    Task,
+    TaskType,
 )
 from app.rag import retrieve
 from app.research import build_answer
 from app.sessions import PostgresSessionService
+from app.tasks import create_task, get_task, list_tasks
 
 MODEL = "openai/gpt-5.6-terra"  # LiteLLM model string: provider prefix + OpenAI model name
 LLM_CALL_TIMEOUT_SECONDS = 30.0
@@ -48,6 +53,7 @@ USER_ID = "user"
 # Session state keys. Both are saved with the chat session, so they cover the whole conversation.
 SEEN_CHUNKS_KEY = "seen_chunks"  # every chunk the model was shown: id -> chunk
 SOURCES_KEY = "sources"  # cumulative source list; a source's number is its position + 1
+ACTIVE_TASK_KEY = "active_task"  # the task this chat operates under, if any
 TURNS_KEY = "turns"  # each turn's question and full response, so a chat can be reopened as it was
 
 # Chats of the Agent tab live in Postgres; evaluation runs use a fresh in-memory session each.
@@ -70,6 +76,15 @@ Rules for the answer:
 - In `citations`, list each distinct chunk you used, once: `source_id` is the chunk's id copied exactly, and `quote` is a short verbatim excerpt (copied exactly) from that chunk that supports your statement. Keep only the passages that matter: you may skip irrelevant stretches with "...", e.g. "The tower was designed by Gustave Eiffel ... and is 330 meters tall". Every part between the "..." must be copied exactly, in the original order.
 - Set `confidence` to how well the chunks support your answer."""
 
+TASK_INSTRUCTION = """
+
+Tasks:
+Besides answering questions, you work on tasks for the user. The only task type for now is `report_creation`: the user is working on a report. A task is the context of this chat; the active task, if any, is stated at the end of these instructions.
+- If the user says they want to start or create a new report, call create_task with task_type `report_creation` and a short title taken from what the user said. Do not create a task when the user only asks a question.
+- If the user refers to a report that may already exist (for example to continue or reopen it), call list_tasks, then open_task with the id of the matching task. If no task matches, tell the user that and ask whether to create a new one; do not create one unprompted.
+- Never create a task that already exists, and do not create or open a task that is already the active one.
+- After creating or opening a task, call submit_answer to confirm it to the user in one sentence, with no citations, no reference markers and a high confidence. Do not search the documents for this."""
+
 
 @dataclass
 class _RunState:
@@ -78,11 +93,12 @@ class _RunState:
     session_id: str = ""
     chunks: dict[str, RetrievedChunk] = field(default_factory=dict)  # every chunk seen in the session, in order
     steps: list[AgentStep] = field(default_factory=list)  # this run's tool calls only
+    task: Task | None = None  # the chat's active task; the model may change it during the run
     answer: Answer | None = None
     cited_ids: list[str] = field(default_factory=list)  # chunks cited in this run's answer
 
 
-def _build_agent(state: _RunState, max_llm_calls: int, search_top_k: int) -> Agent:
+def _build_agent(state: _RunState, max_llm_calls: int, search_top_k: int, use_tasks: bool) -> Agent:
     """Build the agent with tools bound to this run's state."""
 
     def search_documents(query: str, tool_context: ToolContext) -> dict:
@@ -124,13 +140,69 @@ def _build_agent(state: _RunState, max_llm_calls: int, search_top_k: int) -> Age
         tool_context.actions.skip_summarization = True  # the run ends here, no further model call
         return {"status": "submitted"}
 
+    def _activate(task: Task, tool_context: ToolContext) -> dict:
+        state.task = task
+        tool_context.state[ACTIVE_TASK_KEY] = task.model_dump(mode="json")
+        return {"status": "active", "task": task.model_dump(mode="json")}
+
+    def create_task_tool(task_type: str, title: str, tool_context: ToolContext) -> dict:
+        """Create a new task and make it the active one of this chat.
+
+        Args:
+            task_type: The kind of task. Only "report_creation" exists.
+            title: A short title for the task, taken from what the user said.
+        """
+        state.steps.append(
+            AgentStep(tool="create_task", arguments={"task_type": task_type, "title": title}, chunks=[])
+        )
+        if task_type not in get_args(TaskType):
+            return {"error": f"Unknown task_type {task_type!r}; use one of {list(get_args(TaskType))}"}
+        return _activate(create_task(task_type, title), tool_context)
+
+    def list_tasks_tool() -> dict:
+        """List all existing tasks, newest first, to find the one the user refers to."""
+        state.steps.append(AgentStep(tool="list_tasks", arguments={}, chunks=[]))
+        return {"tasks": [t.model_dump(mode="json") for t in list_tasks()]}
+
+    def open_task_tool(task_id: int, tool_context: ToolContext) -> dict:
+        """Make an existing task the active one of this chat.
+
+        Args:
+            task_id: The id of a task returned by list_tasks.
+        """
+        state.steps.append(AgentStep(tool="open_task", arguments={"task_id": task_id}, chunks=[]))
+        task = get_task(task_id)
+        if task is None:
+            return {"error": f"There is no task with id {task_id}"}
+        return _activate(task, tool_context)
+
+    # The model sees the tools under these names; the _tool suffix only avoids clashing with
+    # the imported database functions.
+    create_task_tool.__name__ = "create_task"
+    list_tasks_tool.__name__ = "list_tasks"
+    open_task_tool.__name__ = "open_task"
+
+    def instruction(_: ReadonlyContext) -> str:
+        text = INSTRUCTION.format(max_model_calls=max_llm_calls)
+        if not use_tasks:
+            return text
+        if state.task is None:
+            active = "No task is active."
+        else:
+            active = f"Active task: #{state.task.id}, {state.task.type}, \"{state.task.title}\"."
+        return text + TASK_INSTRUCTION + "\n\n" + active
+
+    tools = [search_documents, submit_answer]
+    if use_tasks:
+        tools += [create_task_tool, list_tasks_tool, open_task_tool]
+
     return Agent(
         name="report_agent",
         model=LiteLlm(
             model=MODEL, api_key=settings.openai_api_key, timeout=LLM_CALL_TIMEOUT_SECONDS
         ),
-        instruction=INSTRUCTION.format(max_model_calls=max_llm_calls),
-        tools=[search_documents, submit_answer],
+        instruction=instruction,
+        tools=tools,
     )
 
 
@@ -141,6 +213,7 @@ async def _run(
     search_top_k: int,
     service: BaseSessionService,
     session_id: str | None,
+    use_tasks: bool,
 ) -> int:
     """Run one turn of the agent in a new or an existing session; return the total tokens used."""
     if session_id is None:
@@ -153,7 +226,10 @@ async def _run(
     state.session_id = session.id
     state.chunks = {cid: RetrievedChunk.model_validate(c) for cid, c in session.state.get(SEEN_CHUNKS_KEY, {}).items()}
 
-    runner = Runner(agent=_build_agent(state, max_llm_calls, search_top_k), app_name=APP_NAME, session_service=service)
+    active_task = session.state.get(ACTIVE_TASK_KEY)
+    state.task = Task.model_validate(active_task) if active_task else None
+
+    runner = Runner(agent=_build_agent(state, max_llm_calls, search_top_k, use_tasks), app_name=APP_NAME, session_service=service)
     message = types.Content(role="user", parts=[types.Part(text=question)])
 
     tokens_used = 0
@@ -184,13 +260,14 @@ def _execute(
     trace: tracing.TraceAttributes,
     service: BaseSessionService,
     session_id: str | None,
+    use_tasks: bool,
 ) -> AgentRun:
     state = _RunState()
     start = time.perf_counter()
 
     try:
         with tracing.trace_attributes(trace):
-            tokens_used = asyncio.run(_run(question, state, max_llm_calls, search_top_k, service, session_id))
+            tokens_used = asyncio.run(_run(question, state, max_llm_calls, search_top_k, service, session_id, use_tasks))
     except LlmCallsLimitExceededError as exc:
         raise AgentDidNotAnswerError(f"The agent used all {max_llm_calls} allowed LLM calls") from exc
     except openai.APITimeoutError as exc:
@@ -210,7 +287,7 @@ def _execute(
     fed_chunks = list(state.chunks.values())
     base = AskResponse(answer=state.answer, tokens_used=tokens_used, response_time_seconds=elapsed)
     return AgentRun(
-        response=AgentAskResponse(**base.model_dump(), steps=state.steps, session_id=state.session_id),
+        response=AgentAskResponse(**base.model_dump(), steps=state.steps, session_id=state.session_id, task=state.task),
         fed_chunks=fed_chunks,
         selected_chunks=[state.chunks[cid] for cid in state.cited_ids],
     )
@@ -220,7 +297,7 @@ def run_agent_with_chunks(
     question: str, max_llm_calls: int, search_top_k: int, trace: tracing.TraceAttributes
 ) -> AgentRun:
     """Answer a single question in a fresh in-memory session, as evaluation runs do."""
-    return _execute(question, max_llm_calls, search_top_k, trace, InMemorySessionService(), None)
+    return _execute(question, max_llm_calls, search_top_k, trace, InMemorySessionService(), None, use_tasks=False)
 
 
 async def _save_turn(session_id: str, question: str, response: AgentAskResponse) -> None:
@@ -237,6 +314,6 @@ def run_agent(question: str, session_id: str | None) -> AgentAskResponse:
     trace = tracing.TraceAttributes(
         name="agent-ask", environment="interactive", tags=["interactive"], metadata={}
     )
-    response = _execute(question, MAX_LLM_CALLS, TOP_K, trace, _chat_sessions, session_id).response
+    response = _execute(question, MAX_LLM_CALLS, TOP_K, trace, _chat_sessions, session_id, use_tasks=True).response
     asyncio.run(_save_turn(response.session_id, question, response))
     return response

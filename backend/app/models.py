@@ -238,6 +238,18 @@ class AgentStep(BaseModel):
     chunks: list[RetrievedChunk]
 
 
+TaskType = Literal["report_creation"]
+
+
+class Task(BaseModel):
+    """Something the agent works on for the user; the active one is the chat's context."""
+
+    id: int
+    type: TaskType
+    title: str
+    created_at: datetime
+
+
 class AgentAskRequest(BaseModel):
     question: str
     session_id: str | None  # the chat to continue; None starts a new chat
@@ -246,6 +258,9 @@ class AgentAskRequest(BaseModel):
 class AgentAskResponse(AskResponse):
     steps: list[AgentStep]  # this turn's tool calls
     session_id: str  # send it back with the next question to continue the chat
+    # The chat's active task after this turn. Defaults to None only so that turns saved before
+    # tasks existed still load.
+    task: Task | None = None
 
 
 class AgentSessionTurn(BaseModel):

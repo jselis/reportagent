@@ -814,3 +814,35 @@ body {
   opacity: 0.6;
   cursor: wait;
 }
+
+.task-context {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 0.7rem;
+  margin: 1rem 0 0;
+  padding: 0.6rem 0.9rem;
+  text-align: left;
+  background: #e8f0fe;
+  border-left: 4px solid #3b6fd4;
+  border-radius: 4px;
+}
+
+.task-context-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #3b6fd4;
+}
+
+.task-context-title {
+  font-weight: 600;
+  color: #1c2b4a;
+}
+
+.task-context-meta {
+  margin-left: auto;
+  font-size: 0.85rem;
+  color: #555;
+}

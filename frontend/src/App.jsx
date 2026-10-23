@@ -685,12 +685,28 @@ function IngestScreen() {
   );
 }
 
+const TASK_TYPE_LABELS = { report_creation: "Report creation" };
+
+// The task the chat operates under (the agent's context), with when it was created.
+function TaskContext({ task }) {
+  return (
+    <div className="task-context">
+      <span className="task-context-label">Task</span>
+      <span className="task-context-title">
+        {TASK_TYPE_LABELS[task.type] || task.type}: {task.title}
+      </span>
+      <span className="task-context-meta">created {new Date(task.created_at).toLocaleString()}</span>
+    </div>
+  );
+}
+
 function AgentScreen({ loadRequest, deletedChat }) {
   const [question, setQuestion] = useState("");
   const [sessionId, setSessionId] = useState(null); // the chat being continued; null before the first question
   const [turns, setTurns] = useState([]); // [{question, answer}]
   const [loading, setLoading] = useState(false);
   const [sources, setSources] = useState([]); // cumulative over the chat; [n] in an answer is sources[n-1]
+  const [task, setTask] = useState(null); // the chat's active task, if the agent has started or reopened one
   const [steps, setSteps] = useState([]); // the latest turn's tool calls
   const [ttft, setTtft] = useState(null);
   const [responseTime, setResponseTime] = useState(null);
@@ -708,6 +724,7 @@ function AgentScreen({ loadRequest, deletedChat }) {
     setSessionId(openedId);
     setTurns(openedTurns.map((t) => ({ question: t.question, answer: t.response.answer.text })));
     setSources(lastTurn.response.answer.sources);
+    setTask(lastTurn.response.task);
     setSteps(lastTurn.response.steps);
     setTtft(lastTurn.response.ttft_seconds);
     setResponseTime(lastTurn.response.response_time_seconds);
@@ -725,6 +742,7 @@ function AgentScreen({ loadRequest, deletedChat }) {
     setSessionId(null);
     setTurns([]);
     setSources([]);
+    setTask(null);
     setSteps([]);
     setTtft(null);
     setResponseTime(null);
@@ -759,6 +777,7 @@ function AgentScreen({ loadRequest, deletedChat }) {
       setSessionId(data.session_id);
       setTurns((prev) => [...prev, { question: asked, answer: data.answer.text }]);
       setSources(data.answer.sources);
+      setTask(data.task);
       setSteps(data.steps);
       setTtft(data.ttft_seconds);
       setResponseTime(data.response_time_seconds);
@@ -773,6 +792,8 @@ function AgentScreen({ loadRequest, deletedChat }) {
 
   return (
     <>
+      {task && <TaskContext task={task} />}
+
       {turns.length > 0 && (
         <div className="chat-transcript">
           {turns.map((turn, i) => (
