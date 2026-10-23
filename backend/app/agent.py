@@ -11,6 +11,7 @@ from google.adk.agents.run_config import RunConfig
 from google.adk.models.lite_llm import LiteLlm
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
+from google.adk.sessions.base_session_service import BaseSessionService
 from google.adk.tools import ToolContext
 from google.genai import types
 from pydantic import ValidationError
@@ -19,9 +20,12 @@ from app.config import settings
 from app.models import (
     AgentAskResponse,
     AgentDidNotAnswerError,
+    AgentSessionNotFoundError,
     AgentStep,
+    Answer,
     AskResponse,
     Citation,
+    DocumentSource,
     GroundedAnswer,
     ResearchAPIError,
     ResearchConnectionError,
@@ -30,27 +34,37 @@ from app.models import (
 )
 from app.rag import retrieve
 from app.research import build_answer
+from app.sessions import PostgresSessionService
 
 MODEL = "openai/gpt-5.6-terra"  # LiteLLM model string: provider prefix + OpenAI model name
 LLM_CALL_TIMEOUT_SECONDS = 30.0
 # Settings of the Agent tab / /api/agent/ask; evaluation runs pass their own.
-MAX_LLM_CALLS = 10  # upper bound on model calls per question: searches + the final answer
+MAX_LLM_CALLS = 10  # upper bound on model calls per question (per turn): searches + the final answer
 TOP_K = 5  # chunks returned per search
 APP_NAME = "reportagent"
 USER_ID = "user"
 
+# Session state keys. Both are saved with the chat session, so they cover the whole conversation.
+SEEN_CHUNKS_KEY = "seen_chunks"  # every chunk the model was shown: id -> chunk
+SOURCES_KEY = "sources"  # cumulative source list; a source's number is its position + 1
+
+# Chats of the Agent tab live in Postgres; evaluation runs use a fresh in-memory session each.
+_chat_sessions = PostgresSessionService()
+
 INSTRUCTION = """You answer questions using ONLY document chunks that you retrieve with the search_documents tool. Each returned chunk has an id, like some-document-3.
+
+The conversation may contain earlier questions and answers. Answer the latest question, using the earlier turns to understand what it refers to. Chunks you retrieved in earlier turns are still in the conversation: you may cite them by their id if they are enough, or search again.
 
 Process:
 - Call search_documents to find chunks. If the results are thin or miss part of the question, search again with a different query. You may split a complex question into several searches.
-- You have at most {max_model_calls} model calls in total. Every search and the final submit_answer each use one, so the last call must be submit_answer. Do not keep searching until the budget runs out: after a few attempts, decide whether the answer can be found reliably in the documents. If it cannot, call submit_answer and say that it is not in the relevant matches in the documents.
+- For each question you have at most {max_model_calls} model calls in total. Every search and the final submit_answer each use one, so the last call must be submit_answer. Do not keep searching until the budget runs out: after a few attempts, decide whether the answer can be found reliably in the documents. If it cannot, call submit_answer and say that it is not in the relevant matches in the documents.
 - When you have enough, call submit_answer exactly once. That ends the run. Never reply with plain text: your answer must go through submit_answer.
 
 Rules for the answer:
 - Base your answer strictly on the retrieved chunks. Do not use outside knowledge, and do not guess.
 - If the chunks do not contain the answer, say clearly in `text` that the answer is not in the relevant matches in the documents. In that case pass no citations and put no reference markers in the text. Use a low confidence.
 - Otherwise, answer directly and concisely, in the language of the question.
-- Right after each statement that comes from a chunk, put that chunk's exact id in square brackets, copied from the tool result, e.g. "The tower is 330 meters tall. [some-document-3]". If a statement is supported by several chunks, use one bracket per id, e.g. [doc-a-0][doc-b-2]. Never invent ids and never use plain numbers as markers.
+- Right after each statement that comes from a chunk, put that chunk's exact id in square brackets, copied from the tool result, e.g. "The tower is 330 meters tall. [some-document-3]". If a statement is supported by several chunks, use one bracket per id, e.g. [doc-a-0][doc-b-2]. Always write the chunk id, never a number: the numbers you may see in the interface are not ids. Never invent ids.
 - In `citations`, list each distinct chunk you used, once: `source_id` is the chunk's id copied exactly, and `quote` is the shortest verbatim excerpt (one or two sentences, copied exactly) from that chunk that supports your statement.
 - Set `confidence` to how well the chunks support your answer."""
 
@@ -59,15 +73,17 @@ Rules for the answer:
 class _RunState:
     """What one agent run collects on the side, outside the model's context."""
 
-    chunks: dict[str, RetrievedChunk] = field(default_factory=dict)  # by chunk id, in retrieval order
-    steps: list[AgentStep] = field(default_factory=list)
-    answer: GroundedAnswer | None = None
+    session_id: str = ""
+    chunks: dict[str, RetrievedChunk] = field(default_factory=dict)  # every chunk seen in the session, in order
+    steps: list[AgentStep] = field(default_factory=list)  # this run's tool calls only
+    answer: Answer | None = None
+    cited_ids: list[str] = field(default_factory=list)  # chunks cited in this run's answer
 
 
 def _build_agent(state: _RunState, max_llm_calls: int, search_top_k: int) -> Agent:
     """Build the agent with tools bound to this run's state."""
 
-    def search_documents(query: str) -> dict:
+    def search_documents(query: str, tool_context: ToolContext) -> dict:
         """Search the ingested documents and return the best-matching chunks.
 
         The search is semantic (embedding-based), not keyword-based: write a natural-language
@@ -81,6 +97,8 @@ def _build_agent(state: _RunState, max_llm_calls: int, search_top_k: int) -> Age
         state.steps.append(AgentStep(tool="search_documents", arguments={"query": query}, chunks=found))
         for chunk in found:
             state.chunks.setdefault(chunk.id, chunk)
+        # Save everything the model has been shown in this session: only these ids are valid citations.
+        tool_context.state[SEEN_CHUNKS_KEY] = {cid: c.model_dump() for cid, c in state.chunks.items()}
         return {"chunks": [{"id": c.id, "text": c.text} for c in found]}
 
     def submit_answer(
@@ -94,9 +112,13 @@ def _build_agent(state: _RunState, max_llm_calls: int, search_top_k: int) -> Age
             citations: One entry per distinct chunk used: its id and a verbatim supporting quote.
         """
         try:
-            state.answer = GroundedAnswer(text=text, confidence=confidence, citations=citations)
+            grounded = GroundedAnswer(text=text, confidence=confidence, citations=citations)
         except ValidationError as exc:
             return {"error": f"Invalid answer, fix it and call submit_answer again: {exc}"}
+
+        previous_sources = [DocumentSource(**s) for s in tool_context.state.get(SOURCES_KEY, [])]
+        state.answer, state.cited_ids = build_answer(grounded, list(state.chunks.values()), previous_sources)
+        tool_context.state[SOURCES_KEY] = [s.model_dump() for s in state.answer.sources]
         tool_context.actions.skip_summarization = True  # the run ends here, no further model call
         return {"status": "submitted"}
 
@@ -110,11 +132,26 @@ def _build_agent(state: _RunState, max_llm_calls: int, search_top_k: int) -> Age
     )
 
 
-async def _run(question: str, state: _RunState, max_llm_calls: int, search_top_k: int) -> int:
-    """Run the agent to completion and return the total tokens used."""
-    service = InMemorySessionService()
+async def _run(
+    question: str,
+    state: _RunState,
+    max_llm_calls: int,
+    search_top_k: int,
+    service: BaseSessionService,
+    session_id: str | None,
+) -> int:
+    """Run one turn of the agent in a new or an existing session; return the total tokens used."""
+    if session_id is None:
+        session = await service.create_session(app_name=APP_NAME, user_id=USER_ID)
+    else:
+        session = await service.get_session(app_name=APP_NAME, user_id=USER_ID, session_id=session_id)
+        if session is None:
+            raise AgentSessionNotFoundError(session_id)
+
+    state.session_id = session.id
+    state.chunks = {cid: RetrievedChunk.model_validate(c) for cid, c in session.state.get(SEEN_CHUNKS_KEY, {}).items()}
+
     runner = Runner(agent=_build_agent(state, max_llm_calls, search_top_k), app_name=APP_NAME, session_service=service)
-    session = await service.create_session(app_name=APP_NAME, user_id=USER_ID)
     message = types.Content(role="user", parts=[types.Part(text=question)])
 
     tokens_used = 0
@@ -134,20 +171,24 @@ class AgentRun:
     """An agent response plus what the run saw and chose, for evaluation."""
 
     response: AgentAskResponse
-    fed_chunks: list[RetrievedChunk]  # every chunk returned by any search: all that reached the model
-    selected_chunks: list[RetrievedChunk]  # the chunks the final answer cites
+    fed_chunks: list[RetrievedChunk]  # every chunk the model was shown (in the whole session)
+    selected_chunks: list[RetrievedChunk]  # the chunks this run's answer cites
 
 
-def run_agent_with_chunks(
-    question: str, max_llm_calls: int, search_top_k: int, trace: tracing.TraceAttributes
+def _execute(
+    question: str,
+    max_llm_calls: int,
+    search_top_k: int,
+    trace: tracing.TraceAttributes,
+    service: BaseSessionService,
+    session_id: str | None,
 ) -> AgentRun:
-    """Answer a question with an agent that searches the documents as often as it needs."""
     state = _RunState()
     start = time.perf_counter()
 
     try:
         with tracing.trace_attributes(trace):
-            tokens_used = asyncio.run(_run(question, state, max_llm_calls, search_top_k))
+            tokens_used = asyncio.run(_run(question, state, max_llm_calls, search_top_k, service, session_id))
     except LlmCallsLimitExceededError as exc:
         raise AgentDidNotAnswerError(f"The agent used all {max_llm_calls} allowed LLM calls") from exc
     except openai.APITimeoutError as exc:
@@ -165,20 +206,25 @@ def run_agent_with_chunks(
         raise AgentDidNotAnswerError("The agent run ended without a valid submit_answer call")
 
     fed_chunks = list(state.chunks.values())
-    answer = build_answer(state.answer, fed_chunks)
-    cited_ids = {source.id for source in answer.sources if source.type == "document"}
-
-    base = AskResponse(answer=answer, tokens_used=tokens_used, response_time_seconds=elapsed)
+    base = AskResponse(answer=state.answer, tokens_used=tokens_used, response_time_seconds=elapsed)
     return AgentRun(
-        response=AgentAskResponse(**base.model_dump(), steps=state.steps),
+        response=AgentAskResponse(**base.model_dump(), steps=state.steps, session_id=state.session_id),
         fed_chunks=fed_chunks,
-        selected_chunks=[c for c in fed_chunks if c.id in cited_ids],
+        selected_chunks=[state.chunks[cid] for cid in state.cited_ids],
     )
 
 
-def run_agent(question: str) -> AgentAskResponse:
-    """The Agent tab's entry point: the agent with this module's default settings."""
+def run_agent_with_chunks(
+    question: str, max_llm_calls: int, search_top_k: int, trace: tracing.TraceAttributes
+) -> AgentRun:
+    """Answer a single question in a fresh in-memory session, as evaluation runs do."""
+    return _execute(question, max_llm_calls, search_top_k, trace, InMemorySessionService(), None)
+
+
+def run_agent(question: str, session_id: str | None) -> AgentAskResponse:
+    """The Agent tab's entry point: one turn of a persisted chat (a new chat if session_id is
+    None), with this module's default settings."""
     trace = tracing.TraceAttributes(
         name="agent-ask", environment="interactive", tags=["interactive"], metadata={}
     )
-    return run_agent_with_chunks(question, MAX_LLM_CALLS, TOP_K, trace).response
+    return _execute(question, MAX_LLM_CALLS, TOP_K, trace, _chat_sessions, session_id).response

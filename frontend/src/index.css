@@ -433,6 +433,7 @@ body {
 }
 
 .sources-list {
+  text-align: left;
   margin: 0.8rem 0 0;
   padding: 0.7rem 0 0 0;
   border-top: 1px solid #ddd;
@@ -698,4 +699,51 @@ body {
 
 .agent-step .chunk-list {
   margin-top: 0.5rem;
+}
+
+.chat-transcript {
+  text-align: left;
+  margin: 1.5rem 0 1rem;
+}
+
+.chat-turn {
+  margin-bottom: 1rem;
+}
+
+.chat-question {
+  font-weight: 600;
+  margin-bottom: 0.3rem;
+}
+
+.chat-answer {
+  color: #333;
+  padding-left: 0.8rem;
+  border-left: 3px solid #d4d4d8;
+}
+
+.ask-bar .secondary {
+  background: transparent;
+  color: #555;
+  border: 1px solid #d4d4d8;
+}
+
+.chat-answer > :first-child {
+  margin-top: 0;
+}
+
+.chat-answer > :last-child {
+  margin-bottom: 0;
+}
+
+.chat-answer p,
+.chat-answer ul,
+.chat-answer ol {
+  margin: 0.5rem 0;
+}
+
+.chat-answer code {
+  font-size: 0.9em;
+  background: #e4e4e7;
+  padding: 0.1rem 0.3rem;
+  border-radius: 3px;
 }

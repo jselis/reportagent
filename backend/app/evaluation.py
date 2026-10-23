@@ -18,11 +18,11 @@ from app.research import research
 
 FAITHFULNESS_INSTRUCTIONS = """You assess whether an AI-generated answer is faithful to the document chunks it was based on.
 
-Break the answer down into its individual atomic factual claims. Ignore citation markers like [1], [2], and do not treat a "the answer is not in the documents"-style refusal as a claim (return an empty claims list for it).
+Break the answer down into its individual atomic factual claims. Ignore citation markers like [1], [2] and the marker [UNSUPPORTED], and do not treat a "the answer is not in the documents"-style refusal as a claim (return an empty claims list for it).
 
 For each claim, decide whether it is directly supported by the provided chunks — `supported: true` if so, `false` if the chunks don't back it up or it isn't in them at all."""
 
-CORRECTNESS_INSTRUCTIONS = """You judge whether a generated answer is correct compared to a reference (ground truth) answer, for the same question. Ignore citation markers like [1], [2] in the generated answer.
+CORRECTNESS_INSTRUCTIONS = """You judge whether a generated answer is correct compared to a reference (ground truth) answer, for the same question. Ignore citation markers like [1], [2] and the marker [UNSUPPORTED] in the generated answer.
 
 Score:
 - 0: the generated answer is wrong or contradicts the reference answer.

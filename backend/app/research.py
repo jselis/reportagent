@@ -25,6 +25,7 @@ Rules:
 - Set `confidence` to how well the chunks support your answer."""
 
 _MARKER = re.compile(r"\[([^\[\]]+)\]")
+UNSUPPORTED_MARKER = "[UNSUPPORTED]"
 
 
 def _build_input(question: str, chunks: list[RetrievedChunk]) -> str:
@@ -49,22 +50,30 @@ def _snippet(chunk: RetrievedChunk, quote: str) -> str:
     return _normalize(chunk.text)[:SNIPPET_FALLBACK_CHARS]
 
 
-def build_answer(grounded: GroundedAnswer, chunks: list[RetrievedChunk]) -> Answer:
-    """Replace the chunk ids the model wrote in the text (e.g. [2-1]) by 1-based
-    numbers in order of first appearance, and build `sources` in that same order.
-    Deterministic: [n] always matches sources[n-1], each carrying its real index id."""
+def build_answer(
+    grounded: GroundedAnswer, chunks: list[RetrievedChunk], previous_sources: list[Source]
+) -> tuple[Answer, list[str]]:
+    """Replace the chunk ids the model wrote in the text (e.g. [2-1]) by numbers, and build
+    `sources`. Numbers are stable: previous_sources (from earlier turns of a chat, in number
+    order) keep their numbers, and a chunk cited for the first time gets the next number, so
+    `sources` is cumulative and [n] always matches sources[n-1]. A marker that is not the id of
+    a chunk the model was shown is replaced by [UNSUPPORTED]. Returns the answer and the ids of
+    the chunks cited in this answer."""
     by_id = {c.id: c for c in chunks}
     quote_by_id: dict[str, str] = {}
     for citation in grounded.citations:
         quote_by_id.setdefault(citation.source_id, citation.quote)
 
-    sources: list[Source] = []
-    number_of: dict[str, int] = {}
+    sources: list[Source] = list(previous_sources)
+    number_of: dict[str, int] = {s.id: i + 1 for i, s in enumerate(sources) if s.type == "document"}
+    cited_ids: list[str] = []
 
     def _replace(match: re.Match) -> str:
         chunk = by_id.get(match.group(1).strip())
         if chunk is None:
-            return match.group(0)  # not a known chunk id: leave the text untouched
+            return UNSUPPORTED_MARKER
+        if chunk.id not in cited_ids:
+            cited_ids.append(chunk.id)
         if chunk.id not in number_of:
             sources.append(
                 DocumentSource(
@@ -78,7 +87,7 @@ def build_answer(grounded: GroundedAnswer, chunks: list[RetrievedChunk]) -> Answ
         return f"[{number_of[chunk.id]}]"
 
     text = _MARKER.sub(_replace, grounded.text)
-    return Answer(text=text, sources=sources, confidence=grounded.confidence)
+    return Answer(text=text, sources=sources, confidence=grounded.confidence), cited_ids
 
 
 def research(question: str, top_k: int) -> tuple[AskResponse, list[RetrievedChunk]]:
@@ -90,7 +99,7 @@ def research(question: str, top_k: int) -> tuple[AskResponse, list[RetrievedChun
     result = run_llm_request(_build_input(question, chunks), INSTRUCTIONS, GroundedAnswer)
 
     response = AskResponse(
-        answer=build_answer(result.parsed, chunks),
+        answer=build_answer(result.parsed, chunks, [])[0],
         tokens_used=result.tokens_used,
         response_time_seconds=result.response_time_seconds,
         ttft_seconds=result.ttft_seconds,

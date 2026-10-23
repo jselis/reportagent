@@ -238,8 +238,14 @@ class AgentStep(BaseModel):
     chunks: list[RetrievedChunk]
 
 
+class AgentAskRequest(BaseModel):
+    question: str
+    session_id: str | None  # the chat to continue; None starts a new chat
+
+
 class AgentAskResponse(AskResponse):
-    steps: list[AgentStep]
+    steps: list[AgentStep]  # this turn's tool calls
+    session_id: str  # send it back with the next question to continue the chat
 
 
 class SummarizeResponse(LLMResponseMeta):
@@ -279,6 +285,10 @@ class ResearchTimeoutError(ResearchError):
 
 class ResearchConnectionError(ResearchError):
     """Raised when the OpenAI call fails to even establish a connection."""
+
+
+class AgentSessionNotFoundError(Exception):
+    """Raised when an agent chat session id doesn't exist."""
 
 
 class AgentDidNotAnswerError(ResearchError):

@@ -18,7 +18,9 @@ from app.models import (
     GroundTruthCaseListResponse,
     StartEvalRunRequest,
     StartEvalRunResponse,
+    AgentAskRequest,
     AgentAskResponse,
+    AgentSessionNotFoundError,
     AgentDidNotAnswerError,
     CorpusResponse,
     AnalyzeSentimentRequest,
@@ -98,11 +100,14 @@ def ask(request: AskRequest) -> AskResponse:
 
 
 @app.post("/api/agent/ask", response_model=AgentAskResponse)
-def agent_ask(request: AskRequest) -> AgentAskResponse:
+def agent_ask(request: AgentAskRequest) -> AgentAskResponse:
     if not request.question.strip():
         raise HTTPException(status_code=400, detail="question must not be empty")
 
-    return _run_or_raise_http(run_agent, request.question)
+    try:
+        return _run_or_raise_http(run_agent, request.question, request.session_id)
+    except AgentSessionNotFoundError:
+        raise HTTPException(status_code=404, detail="This chat no longer exists. Start a new chat.")
 
 
 @app.post("/api/summarize", response_model=SummarizeResponse)

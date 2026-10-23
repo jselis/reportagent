@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import ReactMarkdown from "react-markdown";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
 
@@ -75,6 +76,7 @@ function InspectionMetrics({ ttft, responseTime }) {
 function useGroundTruth() {
   const [mode, setMode] = useState(false); // whether the inspection panel is used to work on ground truth
   const [selectedIds, setSelectedIds] = useState(new Set());
+  const [question, setQuestion] = useState(""); // the question of the case; editable, as a follow-up isn't a standalone question
   const [expectedAnswer, setExpectedAnswer] = useState("");
   const [replacesId, setReplacesId] = useState("");
   const [saving, setSaving] = useState(false);
@@ -95,10 +97,11 @@ function useGroundTruth() {
     loadActiveCases();
   }, []);
 
-  const reset = (answer = "") => {
+  const reset = (nextQuestion = "", nextAnswer = "") => {
     setMode(false);
     setSelectedIds(new Set());
-    setExpectedAnswer(answer);
+    setQuestion(nextQuestion);
+    setExpectedAnswer(nextAnswer);
     setReplacesId("");
     setError(null);
     setSavedId(null);
@@ -114,12 +117,16 @@ function useGroundTruth() {
   };
 
   // chunks: every chunk on screen ({id, text, ...}); the selected ones become the expected chunks.
-  const save = async (question, chunks) => {
+  const save = async (chunks) => {
     if (saving) return;
 
     setError(null);
     setSavedId(null);
 
+    if (!question.trim()) {
+      setError("Question must not be empty.");
+      return;
+    }
     if (!expectedAnswer.trim()) {
       setError("Expected answer must not be empty.");
       return;
@@ -157,7 +164,7 @@ function useGroundTruth() {
   };
 
   return {
-    mode, setMode, selectedIds, toggleChunk, expectedAnswer, setExpectedAnswer,
+    mode, setMode, selectedIds, toggleChunk, question, setQuestion, expectedAnswer, setExpectedAnswer,
     replacesId, setReplacesId, saving, error, savedId, activeCases, reset, save,
   };
 }
@@ -183,6 +190,14 @@ function GroundTruthForm({ gt, onSave }) {
           </option>
         ))}
       </select>
+
+      <label htmlFor="gt-question">Question</label>
+      <textarea
+        id="gt-question"
+        rows={2}
+        value={gt.question}
+        onChange={(e) => gt.setQuestion(e.target.value)}
+      />
 
       <label htmlFor="gt-answer">Expected answer</label>
       <textarea
@@ -296,7 +311,7 @@ function QueryScreen() {
       setSources(mode === "ask" ? data.answer.sources : []);
       setTtft(data.ttft_seconds);
       setResponseTime(data.response_time_seconds);
-      if (mode === "ask") gt.setExpectedAnswer(data.answer.text);
+      if (mode === "ask") gt.reset(inputText, data.answer.text);
 
       if (chunksPromise) {
         const chunksRes = await chunksPromise;
@@ -395,7 +410,7 @@ function QueryScreen() {
 
         {mode === "ask" && chunks.length > 0 && <GroundTruthToggle gt={gt} />}
 
-        {mode === "ask" && gt.mode && <GroundTruthForm gt={gt} onSave={() => gt.save(inputText, chunks)} />}
+        {mode === "ask" && gt.mode && <GroundTruthForm gt={gt} onSave={() => gt.save(chunks)} />}
 
         {mode === "ask" && chunks.length > 0 && (
           <div className="chunk-browser">
@@ -672,51 +687,59 @@ function IngestScreen() {
 
 function AgentScreen() {
   const [question, setQuestion] = useState("");
-  const [askedQuestion, setAskedQuestion] = useState(""); // the question the shown result belongs to
+  const [sessionId, setSessionId] = useState(null); // the chat being continued; null before the first question
+  const [turns, setTurns] = useState([]); // [{question, answer}]
   const [loading, setLoading] = useState(false);
-  const [answer, setAnswer] = useState("");
-  const [sources, setSources] = useState([]);
-  const [steps, setSteps] = useState([]);
+  const [sources, setSources] = useState([]); // cumulative over the chat; [n] in an answer is sources[n-1]
+  const [steps, setSteps] = useState([]); // the latest turn's tool calls
   const [ttft, setTtft] = useState(null);
   const [responseTime, setResponseTime] = useState(null);
   const [error, setError] = useState(null);
   const gt = useGroundTruth();
 
-  // Every distinct chunk any search returned, for the ground truth case.
+  // Every distinct chunk the latest turn's searches returned, for the ground truth case.
   const allChunks = [...new Map(steps.flatMap((s) => s.chunks).map((c) => [c.id, c])).values()];
 
-  const handleSubmit = async () => {
-    if (!question.trim() || loading) return;
-
-    setLoading(true);
-    setError(null);
-    setAnswer("");
+  const handleNewChat = () => {
+    if (loading) return;
+    setSessionId(null);
+    setTurns([]);
     setSources([]);
     setSteps([]);
     setTtft(null);
     setResponseTime(null);
+    setError(null);
     gt.reset();
+  };
+
+  const handleSubmit = async () => {
+    const asked = question.trim();
+    if (!asked || loading) return;
+
+    setLoading(true);
+    setError(null);
 
     try {
       const res = await fetch(`${API_BASE_URL}/api/agent/ask`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question }),
+        body: JSON.stringify({ question: asked, session_id: sessionId }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => null);
 
       if (!res.ok) {
-        setError(data.detail || `Request failed (HTTP ${res.status})`);
+        setError((data && data.detail) || `Request failed (HTTP ${res.status})`);
         return;
       }
 
-      setAskedQuestion(question);
-      setAnswer(data.answer.text);
+      setSessionId(data.session_id);
+      setTurns((prev) => [...prev, { question: asked, answer: data.answer.text }]);
       setSources(data.answer.sources);
       setSteps(data.steps);
       setTtft(data.ttft_seconds);
       setResponseTime(data.response_time_seconds);
-      gt.setExpectedAnswer(data.answer.text);
+      setQuestion("");
+      gt.reset(asked, data.answer.text);
     } catch (err) {
       setError("Could not reach the backend. Is it running?");
     } finally {
@@ -726,10 +749,23 @@ function AgentScreen() {
 
   return (
     <>
+      {turns.length > 0 && (
+        <div className="chat-transcript">
+          {turns.map((turn, i) => (
+            <div key={i} className="chat-turn">
+              <div className="chat-question">{turn.question}</div>
+              <div className="chat-answer">
+                <ReactMarkdown>{turn.answer}</ReactMarkdown>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="ask-bar">
         <input
           type="text"
-          placeholder="Ask the agent a question..."
+          placeholder={turns.length === 0 ? "Ask the agent a question..." : "Ask a follow-up question..."}
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
@@ -737,27 +773,27 @@ function AgentScreen() {
         <button type="button" onClick={handleSubmit} disabled={loading}>
           {loading ? "Waiting for the agent..." : "Submit"}
         </button>
+        {turns.length > 0 && (
+          <button type="button" className="secondary" onClick={handleNewChat} disabled={loading}>
+            New chat
+          </button>
+        )}
       </div>
 
       {error && <div className="error-box">{error}</div>}
 
-      <div className="result">
-        <label htmlFor="agent-answer-box">Answer</label>
-        <textarea id="agent-answer-box" readOnly rows={6} value={answer} />
-
-        {sources.length > 0 && (
-          <ol className="sources-list">
-            {sources.map((source, i) => (
-              <li key={i}>
-                <span className="source-id">
-                  {source.document_id} (chunk {source.chunk_id})
-                </span>
-                <span className="source-snippet"> — {source.snippet}</span>
-              </li>
-            ))}
-          </ol>
-        )}
-      </div>
+      {sources.length > 0 && (
+        <ol className="sources-list">
+          {sources.map((source, i) => (
+            <li key={source.id}>
+              <span className="source-id">
+                {source.document_id} (chunk {source.chunk_id})
+              </span>
+              <span className="source-snippet"> — {source.snippet}</span>
+            </li>
+          ))}
+        </ol>
+      )}
 
       <details className="inspection-panel">
         <summary>Inspection</summary>
@@ -765,11 +801,11 @@ function AgentScreen() {
 
         {steps.length > 0 && <GroundTruthToggle gt={gt} />}
 
-        {gt.mode && <GroundTruthForm gt={gt} onSave={() => gt.save(askedQuestion, allChunks)} />}
+        {gt.mode && <GroundTruthForm gt={gt} onSave={() => gt.save(allChunks)} />}
 
         {steps.length > 0 && (
           <div className="agent-steps">
-            <label>Agent steps ({steps.length})</label>
+            <label>Agent steps of the latest answer ({steps.length})</label>
             {steps.map((step, i) => (
               <details key={i} className="agent-step">
                 <summary>
