@@ -10,7 +10,6 @@ from google.adk.agents import Agent
 from google.adk.agents.invocation_context import LlmCallsLimitExceededError
 from google.adk.agents.readonly_context import ReadonlyContext
 from google.adk.agents.run_config import RunConfig
-from google.adk.events import Event, EventActions
 from google.adk.models.lite_llm import LiteLlm
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
@@ -39,8 +38,8 @@ from app.models import (
 )
 from app.rag import retrieve
 from app.research import build_answer
-from app.sessions import PostgresSessionService
-from app.tasks import create_task, get_task, list_tasks
+from app.sessions import ChatSessionService
+from app.tasks import create_task, find_task, list_tasks
 
 MODEL = "openai/gpt-5.6-terra"  # LiteLLM model string: provider prefix + OpenAI model name
 LLM_CALL_TIMEOUT_SECONDS = 30.0
@@ -56,8 +55,8 @@ SOURCES_KEY = "sources"  # cumulative source list; a source's number is its posi
 ACTIVE_TASK_KEY = "active_task"  # the task this chat operates under, if any
 TURNS_KEY = "turns"  # each turn's question and full response, so a chat can be reopened as it was
 
-# Chats of the Agent tab live in Postgres; evaluation runs use a fresh in-memory session each.
-_chat_sessions = PostgresSessionService()
+# Chats of the Agent tab live in Postgres (one ChatSessionService per turn); evaluation runs use a
+# fresh in-memory session each.
 
 INSTRUCTION = """You answer questions using ONLY document chunks that you retrieve with the search_documents tool. Each returned chunk has an id, like some-document-3.
 
@@ -76,14 +75,14 @@ Rules for the answer:
 - In `citations`, list each distinct chunk you used, once: `source_id` is the chunk's id copied exactly, and `quote` is a short verbatim excerpt (copied exactly) from that chunk that supports your statement. Keep only the passages that matter: you may skip irrelevant stretches with "...", e.g. "The tower was designed by Gustave Eiffel ... and is 330 meters tall". Every part between the "..." must be copied exactly, in the original order.
 - Set `confidence` to how well the chunks support your answer."""
 
-TASK_INSTRUCTION = """
+# Appended to the instruction when tasks are enabled. When to switch task is described in the
+# switch_task tool; this block only gives the model what it needs to remember: the current task
+# and the tasks that exist.
+TASK_CONTEXT = """
 
-Tasks:
-Besides answering questions, you work on tasks for the user. The only task type for now is `report_creation`: the user is working on a report. A task is the context of this chat; the active task, if any, is stated at the end of these instructions.
-- If the user says they want to start or create a new report, call create_task with task_type `report_creation` and a short title taken from what the user said. Do not create a task when the user only asks a question.
-- If the user refers to a report that may already exist (for example to continue or reopen it), call list_tasks, then open_task with the id of the matching task. If no task matches, tell the user that and ask whether to create a new one; do not create one unprompted.
-- Never create a task that already exists, and do not create or open a task that is already the active one.
-- After creating or opening a task, call submit_answer to confirm it to the user in one sentence, with no citations, no reference markers and a high confidence. Do not search the documents for this."""
+Task context (the user can work on a task; see the switch_task tool):
+Current task: {current}
+Existing tasks: {existing}"""
 
 
 @dataclass
@@ -93,7 +92,8 @@ class _RunState:
     session_id: str = ""
     chunks: dict[str, RetrievedChunk] = field(default_factory=dict)  # every chunk seen in the session, in order
     steps: list[AgentStep] = field(default_factory=list)  # this run's tool calls only
-    task: Task | None = None  # the chat's active task; the model may change it during the run
+    task: Task | None = None  # the chat's current task; the model may switch it during the run
+    known_tasks: list[Task] = field(default_factory=list)  # every existing task, for the instruction
     answer: Answer | None = None
     cited_ids: list[str] = field(default_factory=list)  # chunks cited in this run's answer
 
@@ -140,61 +140,63 @@ def _build_agent(state: _RunState, max_llm_calls: int, search_top_k: int, use_ta
         tool_context.actions.skip_summarization = True  # the run ends here, no further model call
         return {"status": "submitted"}
 
-    def _activate(task: Task, tool_context: ToolContext) -> dict:
-        state.task = task
-        tool_context.state[ACTIVE_TASK_KEY] = task.model_dump(mode="json")
-        return {"status": "active", "task": task.model_dump(mode="json")}
+    def switch_task(task_type: str, title: str, tool_context: ToolContext) -> dict:
+        """Switch the task context of this chat: to a task (new or existing), or off. Call this
+        ONLY when the user's message changes the task context; never for an ordinary question,
+        and never to select the task that is already current.
 
-    def create_task_tool(task_type: str, title: str, tool_context: ToolContext) -> dict:
-        """Create a new task and make it the active one of this chat.
+        Task types: "report_creation" (the user works on a report) or "none" (no task).
+
+        Call it when the user:
+        - wants to start working on a new task, e.g. "let's create a report on X". Pass the type
+          and a short title taken from what they said.
+        - refers to an existing task to continue or return to it, e.g. "about that report on X".
+          Pass its type and its EXACT title from the list of existing tasks in your instructions.
+          If the user means an existing task, never invent a new title: use that one.
+        - wants to leave the current task, e.g. "forget the report" or "let's talk about something
+          else". Pass task_type "none" and an empty title.
+        - moves from one task to another: pass the task they move to.
+
+        Afterwards, confirm the new context to the user in one sentence via submit_answer, with no citations, no reference markers and a high confidence. Do not search the documents for this.
 
         Args:
-            task_type: The kind of task. Only "report_creation" exists.
-            title: A short title for the task, taken from what the user said.
+            task_type: "report_creation" or "none".
+            title: The exact title of an existing task, or a short title for a new one. Empty when task_type is "none".
         """
         state.steps.append(
-            AgentStep(tool="create_task", arguments={"task_type": task_type, "title": title}, chunks=[])
+            AgentStep(tool="switch_task", arguments={"task_type": task_type, "title": title}, chunks=[])
         )
+        if task_type == "none":
+            state.task = None
+            tool_context.state[ACTIVE_TASK_KEY] = None
+            return {"status": "no task is active now"}
         if task_type not in get_args(TaskType):
-            return {"error": f"Unknown task_type {task_type!r}; use one of {list(get_args(TaskType))}"}
-        return _activate(create_task(task_type, title), tool_context)
+            return {"error": f"Unknown task_type {task_type!r}; use one of {list(get_args(TaskType))} or \"none\""}
+        title = title.strip()
+        if not title:
+            return {"error": "A task needs a title"}
 
-    def list_tasks_tool() -> dict:
-        """List all existing tasks, newest first, to find the one the user refers to."""
-        state.steps.append(AgentStep(tool="list_tasks", arguments={}, chunks=[]))
-        return {"tasks": [t.model_dump(mode="json") for t in list_tasks()]}
-
-    def open_task_tool(task_id: int, tool_context: ToolContext) -> dict:
-        """Make an existing task the active one of this chat.
-
-        Args:
-            task_id: The id of a task returned by list_tasks.
-        """
-        state.steps.append(AgentStep(tool="open_task", arguments={"task_id": task_id}, chunks=[]))
-        task = get_task(task_id)
+        task = find_task(task_type, title)
+        status = "opened an existing task"
         if task is None:
-            return {"error": f"There is no task with id {task_id}"}
-        return _activate(task, tool_context)
-
-    # The model sees the tools under these names; the _tool suffix only avoids clashing with
-    # the imported database functions.
-    create_task_tool.__name__ = "create_task"
-    list_tasks_tool.__name__ = "list_tasks"
-    open_task_tool.__name__ = "open_task"
+            task = create_task(task_type, title)
+            state.known_tasks.append(task)
+            status = "created a new task"
+        state.task = task
+        tool_context.state[ACTIVE_TASK_KEY] = task.model_dump(mode="json")
+        return {"status": status, "task": task.model_dump(mode="json")}
 
     def instruction(_: ReadonlyContext) -> str:
         text = INSTRUCTION.format(max_model_calls=max_llm_calls)
         if not use_tasks:
             return text
-        if state.task is None:
-            active = "No task is active."
-        else:
-            active = f"Active task: #{state.task.id}, {state.task.type}, \"{state.task.title}\"."
-        return text + TASK_INSTRUCTION + "\n\n" + active
+        current = "none" if state.task is None else f'{state.task.type} "{state.task.title}"'
+        existing = "; ".join(f'{t.type} "{t.title}"' for t in state.known_tasks) or "none"
+        return text + TASK_CONTEXT.format(current=current, existing=existing)
 
     tools = [search_documents, submit_answer]
     if use_tasks:
-        tools += [create_task_tool, list_tasks_tool, open_task_tool]
+        tools.append(switch_task)
 
     return Agent(
         name="report_agent",
@@ -228,6 +230,8 @@ async def _run(
 
     active_task = session.state.get(ACTIVE_TASK_KEY)
     state.task = Task.model_validate(active_task) if active_task else None
+    if use_tasks:
+        state.known_tasks = list_tasks()
 
     runner = Runner(agent=_build_agent(state, max_llm_calls, search_top_k, use_tasks), app_name=APP_NAME, session_service=service)
     message = types.Content(role="user", parts=[types.Part(text=question)])
@@ -300,20 +304,13 @@ def run_agent_with_chunks(
     return _execute(question, max_llm_calls, search_top_k, trace, InMemorySessionService(), None, use_tasks=False)
 
 
-async def _save_turn(session_id: str, question: str, response: AgentAskResponse) -> None:
-    """Append the turn to the chat's saved turns (kept in session state, next to the sources)."""
-    session = await _chat_sessions.get_session(app_name=APP_NAME, user_id=USER_ID, session_id=session_id)
-    turns = [*session.state.get(TURNS_KEY, []), {"question": question, "response": response.model_dump(mode="json")}]
-    event = Event(author=APP_NAME, actions=EventActions(state_delta={TURNS_KEY: turns}))
-    await _chat_sessions.append_event(session, event)
-
-
 def run_agent(question: str, session_id: str | None) -> AgentAskResponse:
     """The Agent tab's entry point: one turn of a persisted chat (a new chat if session_id is
     None), with this module's default settings."""
     trace = tracing.TraceAttributes(
         name="agent-ask", environment="interactive", tags=["interactive"], metadata={}
     )
-    response = _execute(question, MAX_LLM_CALLS, TOP_K, trace, _chat_sessions, session_id, use_tasks=True).response
-    asyncio.run(_save_turn(response.session_id, question, response))
+    service = ChatSessionService()
+    response = _execute(question, MAX_LLM_CALLS, TOP_K, trace, service, session_id, use_tasks=True).response
+    service.save_turn(TURNS_KEY, {"question": question, "response": response.model_dump(mode="json")})
     return response

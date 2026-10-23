@@ -11,15 +11,22 @@ from google.adk.sessions.base_session_service import (
     ListSessionsResponse,
 )
 from google.adk.sessions.state import State
-from psycopg2.extras import Json
+from psycopg2.extras import Json, execute_values
 
 from app.db import get_connection
 
 
-class PostgresSessionService(BaseSessionService):
-    """ADK session service that keeps chat sessions in our own Postgres tables
-    (chat_session for the session state, chat_event for the conversation history), so a chat
-    survives restarts and redeploys. Only session-scoped state is supported."""
+class ChatSessionService(BaseSessionService):
+    """ADK session service for ONE turn of a persisted chat. The chat is loaded from our own
+    Postgres tables once (chat_session for the state, chat_event for the conversation history),
+    the turn runs on the in-memory session, and save_turn() then writes everything the turn
+    added in a single transaction. Nothing reads the database during a turn, so writing as the
+    run goes would only add round trips; and a turn that fails saves nothing, so a chat never
+    contains half a turn. Only session-scoped state is supported."""
+
+    def __init__(self) -> None:
+        self._session: Session | None = None
+        self._persisted_events = 0  # how many of the session's events are already in the database
 
     async def create_session(
         self,
@@ -29,9 +36,13 @@ class PostgresSessionService(BaseSessionService):
         state: Optional[dict[str, Any]] = None,
         session_id: Optional[str] = None,
     ) -> Session:
-        return await asyncio.to_thread(
-            self._create_session, app_name, user_id, state or {}, session_id or str(uuid.uuid4())
+        """A new chat, in memory only: its row is written by save_turn()."""
+        self._session = Session(
+            id=session_id or str(uuid.uuid4()), app_name=app_name, user_id=user_id,
+            state=state or {}, events=[], last_update_time=time.time(),
         )
+        self._persisted_events = 0
+        return self._session
 
     async def get_session(
         self,
@@ -41,45 +52,56 @@ class PostgresSessionService(BaseSessionService):
         session_id: str,
         config: Optional[GetSessionConfig] = None,
     ) -> Optional[Session]:
-        return await asyncio.to_thread(self._get_session, app_name, user_id, session_id, config)
+        """This turn's session: loaded from the database the first time, then served from memory."""
+        if self._session is None or self._session.id != session_id:
+            self._session = await asyncio.to_thread(self._load, app_name, user_id, session_id)
+            self._persisted_events = len(self._session.events) if self._session else 0
+        return self._session
 
     async def list_sessions(self, *, app_name: str, user_id: Optional[str] = None) -> ListSessionsResponse:
-        return await asyncio.to_thread(self._list_sessions, app_name, user_id)
+        raise NotImplementedError("Chats are listed by app.chat_history")
 
     async def delete_session(self, *, app_name: str, user_id: str, session_id: str) -> None:
-        await asyncio.to_thread(self._delete_session, app_name, user_id, session_id)
+        raise NotImplementedError("Chats are deleted by app.chat_history")
 
     async def append_event(self, session: Session, event: Event) -> Event:
-        """Update the in-memory session as the base class does, then persist the event and
-        the resulting (non-temporary) session state."""
+        """Update the in-memory session as the base class does; saving happens in save_turn()."""
         if event.partial:
             return event
         event = await super().append_event(session, event)
-        persistent_state = {k: v for k, v in session.state.items() if not k.startswith(State.TEMP_PREFIX)}
-        await asyncio.to_thread(self._persist_event, session.id, event, persistent_state)
         session.last_update_time = time.time()
         return event
 
-    # --- blocking database access, run in a worker thread ---
+    def save_turn(self, turns_key: str, turn: dict) -> None:
+        """Add the turn record to the session state, then write the new events and the state."""
+        session = self._session
+        session.state[turns_key] = [*session.state.get(turns_key, []), turn]
+        persistent_state = {k: v for k, v in session.state.items() if not k.startswith(State.TEMP_PREFIX)}
+        new_events = session.events[self._persisted_events:]
 
-    def _create_session(self, app_name: str, user_id: str, state: dict, session_id: str) -> Session:
         conn = get_connection()
         try:
             with conn, conn.cursor() as cur:
                 cur.execute(
-                    "INSERT INTO chat_session (id, app_name, user_id, state) VALUES (%s, %s, %s, %s)",
-                    (session_id, app_name, user_id, Json(state)),
+                    """
+                    INSERT INTO chat_session (id, app_name, user_id, state) VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (id) DO UPDATE SET state = EXCLUDED.state, updated_at = now()
+                    """,
+                    (session.id, session.app_name, session.user_id, Json(persistent_state)),
                 )
+                if new_events:
+                    execute_values(
+                        cur,
+                        "INSERT INTO chat_event (chat_session_id, event) VALUES %s",
+                        [(session.id, Json(e.model_dump(mode="json", exclude_none=True))) for e in new_events],
+                    )
         finally:
             conn.close()
-        return Session(
-            id=session_id, app_name=app_name, user_id=user_id, state=state, events=[],
-            last_update_time=time.time(),
-        )
+        self._persisted_events = len(session.events)
 
-    def _get_session(
-        self, app_name: str, user_id: str, session_id: str, config: Optional[GetSessionConfig]
-    ) -> Optional[Session]:
+    # --- blocking database access, run in a worker thread ---
+
+    def _load(self, app_name: str, user_id: str, session_id: str) -> Optional[Session]:
         conn = get_connection()
         try:
             with conn.cursor() as cur:
@@ -100,62 +122,7 @@ class PostgresSessionService(BaseSessionService):
                 events = [Event.model_validate(r[0]) for r in cur.fetchall()]
         finally:
             conn.close()
-
-        if config is not None:
-            if config.after_timestamp is not None:
-                events = [e for e in events if e.timestamp >= config.after_timestamp]
-            if config.num_recent_events is not None:
-                events = events[-config.num_recent_events:] if config.num_recent_events > 0 else []
-
         return Session(
             id=session_id, app_name=app_name, user_id=user_id, state=state, events=events,
             last_update_time=float(updated_at),
         )
-
-    def _list_sessions(self, app_name: str, user_id: Optional[str]) -> ListSessionsResponse:
-        conn = get_connection()
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT id, user_id, extract(epoch FROM updated_at) FROM chat_session
-                    WHERE app_name = %s AND (%s::text IS NULL OR user_id = %s)
-                    ORDER BY updated_at
-                    """,
-                    (app_name, user_id, user_id),
-                )
-                rows = cur.fetchall()
-        finally:
-            conn.close()
-        return ListSessionsResponse(
-            sessions=[
-                Session(id=id_, app_name=app_name, user_id=uid, state={}, events=[], last_update_time=float(ts))
-                for id_, uid, ts in rows
-            ]
-        )
-
-    def _delete_session(self, app_name: str, user_id: str, session_id: str) -> None:
-        conn = get_connection()
-        try:
-            with conn, conn.cursor() as cur:
-                cur.execute(
-                    "DELETE FROM chat_session WHERE id = %s AND app_name = %s AND user_id = %s",
-                    (session_id, app_name, user_id),
-                )
-        finally:
-            conn.close()
-
-    def _persist_event(self, session_id: str, event: Event, state: dict) -> None:
-        conn = get_connection()
-        try:
-            with conn, conn.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO chat_event (chat_session_id, event) VALUES (%s, %s)",
-                    (session_id, Json(event.model_dump(mode="json", exclude_none=True))),
-                )
-                cur.execute(
-                    "UPDATE chat_session SET state = %s, updated_at = now() WHERE id = %s",
-                    (Json(state), session_id),
-                )
-        finally:
-            conn.close()

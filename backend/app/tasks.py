@@ -30,11 +30,16 @@ def list_tasks() -> list[Task]:
     return [Task(id=r[0], type=r[1], title=r[2], created_at=r[3]) for r in rows]
 
 
-def get_task(task_id: int) -> Task | None:
+def find_task(task_type: str, title: str) -> Task | None:
+    """The task of this type with this title (ignoring case and surrounding spaces), if any."""
     conn = get_connection()
     try:
         with conn, conn.cursor() as cur:
-            cur.execute(f"SELECT {_COLUMNS} FROM task WHERE id = %s", (task_id,))
+            cur.execute(
+                f"SELECT {_COLUMNS} FROM task WHERE type = %s AND lower(btrim(title)) = lower(btrim(%s)) "
+                "ORDER BY id LIMIT 1",
+                (task_type, title),
+            )
             row = cur.fetchone()
     finally:
         conn.close()
