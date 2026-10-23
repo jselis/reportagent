@@ -685,7 +685,7 @@ function IngestScreen() {
   );
 }
 
-function AgentScreen() {
+function AgentScreen({ loadRequest }) {
   const [question, setQuestion] = useState("");
   const [sessionId, setSessionId] = useState(null); // the chat being continued; null before the first question
   const [turns, setTurns] = useState([]); // [{question, answer}]
@@ -699,6 +699,22 @@ function AgentScreen() {
 
   // Every distinct chunk the latest turn's searches returned, for the ground truth case.
   const allChunks = [...new Map(steps.flatMap((s) => s.chunks).map((c) => [c.id, c])).values()];
+
+  // Opening a past chat from the Sessions tab: show it as it was when it was last used.
+  useEffect(() => {
+    if (!loadRequest) return;
+    const { session_id: openedId, turns: openedTurns } = loadRequest.session;
+    const lastTurn = openedTurns[openedTurns.length - 1];
+    setSessionId(openedId);
+    setTurns(openedTurns.map((t) => ({ question: t.question, answer: t.response.answer.text })));
+    setSources(lastTurn.response.answer.sources);
+    setSteps(lastTurn.response.steps);
+    setTtft(lastTurn.response.ttft_seconds);
+    setResponseTime(lastTurn.response.response_time_seconds);
+    setQuestion("");
+    setError(null);
+    gt.reset(lastTurn.question, lastTurn.response.answer.text);
+  }, [loadRequest]);
 
   const handleNewChat = () => {
     if (loading) return;
@@ -817,6 +833,66 @@ function AgentScreen() {
           </div>
         )}
       </details>
+    </>
+  );
+}
+
+function SessionsScreen({ onOpen }) {
+  const [sessions, setSessions] = useState(null);
+  const [error, setError] = useState(null);
+  const [openingId, setOpeningId] = useState(null);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const data = await apiJson("/api/agent/sessions");
+        setSessions(data.sessions);
+      } catch (err) {
+        setError(err.message);
+      }
+    };
+    load();
+  }, []);
+
+  const handleOpen = async (sessionId) => {
+    if (openingId) return;
+    setOpeningId(sessionId);
+    setError(null);
+    try {
+      onOpen(await apiJson(`/api/agent/sessions/${sessionId}`));
+    } catch (err) {
+      setError(err.message || "Could not reach the backend. Is it running?");
+      setOpeningId(null);
+    }
+  };
+
+  if (!sessions) return error ? <div className="error-box">{error}</div> : <p>Loading…</p>;
+
+  return (
+    <>
+      {error && <div className="error-box">{error}</div>}
+      {sessions.length === 0 ? (
+        <p>No agent chats yet.</p>
+      ) : (
+        <ul className="session-list">
+          {sessions.map((session) => (
+            <li key={session.id}>
+              <button
+                type="button"
+                className="session-item"
+                onClick={() => handleOpen(session.id)}
+                disabled={openingId !== null}
+              >
+                <span className="session-title">{session.title}</span>
+                <span className="session-meta">
+                  {session.turn_count} question{session.turn_count === 1 ? "" : "s"} · last active{" "}
+                  {new Date(session.updated_at).toLocaleString()}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </>
   );
 }
@@ -1192,6 +1268,12 @@ function AdminScreen() {
 
 function App() {
   const [screen, setScreen] = useState("ingest");
+  const [agentLoad, setAgentLoad] = useState(null); // a past chat the Agent tab should show
+
+  const handleOpenSession = (session) => {
+    setAgentLoad({ session });
+    setScreen("agent");
+  };
 
   return (
     <div className="app">
@@ -1228,6 +1310,13 @@ function App() {
         </button>
         <button
           type="button"
+          className={screen === "sessions" ? "active" : ""}
+          onClick={() => setScreen("sessions")}
+        >
+          Sessions
+        </button>
+        <button
+          type="button"
           className={screen === "evals" ? "active" : ""}
           onClick={() => setScreen("evals")}
         >
@@ -1244,7 +1333,11 @@ function App() {
 
       {screen === "query" && <QueryScreen />}
       {screen === "ingest" && <IngestScreen />}
-      {screen === "agent" && <AgentScreen />}
+      {/* The Agent tab stays mounted, so its chat survives switching tabs. */}
+      <div style={{ display: screen === "agent" ? "block" : "none" }}>
+        <AgentScreen loadRequest={agentLoad} />
+      </div>
+      {screen === "sessions" && <SessionsScreen onOpen={handleOpenSession} />}
       {screen === "corpus" && <CorpusScreen />}
       {screen === "evals" && <EvalsScreen />}
       {screen === "admin" && <AdminScreen />}

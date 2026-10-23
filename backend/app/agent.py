@@ -8,6 +8,7 @@ from app import tracing  # sets up tracing; must be imported before google.adk i
 from google.adk.agents import Agent
 from google.adk.agents.invocation_context import LlmCallsLimitExceededError
 from google.adk.agents.run_config import RunConfig
+from google.adk.events import Event, EventActions
 from google.adk.models.lite_llm import LiteLlm
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
@@ -47,6 +48,7 @@ USER_ID = "user"
 # Session state keys. Both are saved with the chat session, so they cover the whole conversation.
 SEEN_CHUNKS_KEY = "seen_chunks"  # every chunk the model was shown: id -> chunk
 SOURCES_KEY = "sources"  # cumulative source list; a source's number is its position + 1
+TURNS_KEY = "turns"  # each turn's question and full response, so a chat can be reopened as it was
 
 # Chats of the Agent tab live in Postgres; evaluation runs use a fresh in-memory session each.
 _chat_sessions = PostgresSessionService()
@@ -221,10 +223,20 @@ def run_agent_with_chunks(
     return _execute(question, max_llm_calls, search_top_k, trace, InMemorySessionService(), None)
 
 
+async def _save_turn(session_id: str, question: str, response: AgentAskResponse) -> None:
+    """Append the turn to the chat's saved turns (kept in session state, next to the sources)."""
+    session = await _chat_sessions.get_session(app_name=APP_NAME, user_id=USER_ID, session_id=session_id)
+    turns = [*session.state.get(TURNS_KEY, []), {"question": question, "response": response.model_dump(mode="json")}]
+    event = Event(author=APP_NAME, actions=EventActions(state_delta={TURNS_KEY: turns}))
+    await _chat_sessions.append_event(session, event)
+
+
 def run_agent(question: str, session_id: str | None) -> AgentAskResponse:
     """The Agent tab's entry point: one turn of a persisted chat (a new chat if session_id is
     None), with this module's default settings."""
     trace = tracing.TraceAttributes(
         name="agent-ask", environment="interactive", tags=["interactive"], metadata={}
     )
-    return _execute(question, MAX_LLM_CALLS, TOP_K, trace, _chat_sessions, session_id).response
+    response = _execute(question, MAX_LLM_CALLS, TOP_K, trace, _chat_sessions, session_id).response
+    asyncio.run(_save_turn(response.session_id, question, response))
+    return response

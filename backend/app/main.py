@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import llm
 from app.agent import run_agent
+from app.chat_history import get_agent_session, list_agent_sessions
 from app.config import settings
 from app.documents import extract_pdf_text
 from app.evaluation import create_eval_run, list_eval_runs, require_eval_run, run_generation, run_scoring
@@ -20,7 +21,9 @@ from app.models import (
     StartEvalRunResponse,
     AgentAskRequest,
     AgentAskResponse,
+    AgentSessionListResponse,
     AgentSessionNotFoundError,
+    AgentSessionResponse,
     AgentDidNotAnswerError,
     CorpusResponse,
     AnalyzeSentimentRequest,
@@ -108,6 +111,19 @@ def agent_ask(request: AgentAskRequest) -> AgentAskResponse:
         return _run_or_raise_http(run_agent, request.question, request.session_id)
     except AgentSessionNotFoundError:
         raise HTTPException(status_code=404, detail="This chat no longer exists. Start a new chat.")
+
+
+@app.get("/api/agent/sessions", response_model=AgentSessionListResponse)
+def agent_sessions() -> AgentSessionListResponse:
+    return list_agent_sessions()
+
+
+@app.get("/api/agent/sessions/{session_id}", response_model=AgentSessionResponse)
+def agent_session(session_id: str) -> AgentSessionResponse:
+    try:
+        return get_agent_session(session_id)
+    except AgentSessionNotFoundError:
+        raise HTTPException(status_code=404, detail="That chat doesn't exist.")
 
 
 @app.post("/api/summarize", response_model=SummarizeResponse)

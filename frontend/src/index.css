@@ -747,3 +747,44 @@ body {
   padding: 0.1rem 0.3rem;
   border-radius: 3px;
 }
+
+.session-list {
+  list-style: none;
+  padding: 0;
+  margin: 1rem 0 0;
+  text-align: left;
+}
+
+.session-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  width: 100%;
+  padding: 0.7rem 0.9rem;
+  margin-bottom: 0.5rem;
+  text-align: left;
+  background: white;
+  color: #222;
+  border: 1px solid #d4d4d8;
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.session-item:hover:not(:disabled) {
+  border-color: #888;
+}
+
+.session-item:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.session-title {
+  font-weight: 600;
+}
+
+.session-meta {
+  font-size: 0.8rem;
+  color: #777;
+}

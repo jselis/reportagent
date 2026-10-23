@@ -248,6 +248,30 @@ class AgentAskResponse(AskResponse):
     session_id: str  # send it back with the next question to continue the chat
 
 
+class AgentSessionTurn(BaseModel):
+    question: str
+    response: AgentAskResponse
+
+
+class AgentSessionResponse(BaseModel):
+    """A whole chat as it was in the Agent tab; the last turn holds the cumulative sources."""
+
+    session_id: str
+    turns: list[AgentSessionTurn]
+
+
+class AgentSessionSummary(BaseModel):
+    id: str
+    created_at: datetime
+    updated_at: datetime
+    turn_count: int
+    title: str  # the first question
+
+
+class AgentSessionListResponse(BaseModel):
+    sessions: list[AgentSessionSummary]
+
+
 class SummarizeResponse(LLMResponseMeta):
     summary: Summary
 
