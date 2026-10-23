@@ -687,26 +687,41 @@ function IngestScreen() {
 
 const TASK_TYPE_LABELS = { report_creation: "Report creation" };
 
-// The task the chat operates under (the agent's context), with when it was created.
-function TaskContext({ task }) {
+// Side panel for the task the chat operates under (the agent's context). Collapsed it is a bar
+// with the task name written vertically; expanding rotates the name into the panel header.
+function TaskPanel({ task, collapsed, onToggle }) {
+  const typeLabel = TASK_TYPE_LABELS[task.type] || task.type;
   return (
-    <div className="task-context">
-      <span className="task-context-label">Task</span>
-      <span className="task-context-title">
-        {TASK_TYPE_LABELS[task.type] || task.type}: {task.title}
-      </span>
-      <span className="task-context-meta">created {new Date(task.created_at).toLocaleString()}</span>
-    </div>
+    <aside className={`task-panel${collapsed ? " collapsed" : ""}`}>
+      <button
+        type="button"
+        className="task-panel-toggle"
+        onClick={onToggle}
+        aria-expanded={!collapsed}
+        title={collapsed ? "Show the task" : "Collapse the task panel"}
+      >
+        {collapsed ? "»" : "«"}
+      </button>
+      <div className="task-panel-name" title={`${typeLabel}: ${task.title}`}>
+        {task.title}
+      </div>
+      <div className="task-panel-body">
+        <div className="task-panel-type">{typeLabel}</div>
+        <div className="task-panel-meta">Created {new Date(task.created_at).toLocaleString()}</div>
+        <div className="task-panel-placeholder">The report will appear here.</div>
+      </div>
+    </aside>
   );
 }
 
-function AgentScreen({ loadRequest, deletedChat }) {
+function AgentScreen({ loadRequest, deletedChat, onTaskChange }) {
   const [question, setQuestion] = useState("");
   const [sessionId, setSessionId] = useState(null); // the chat being continued; null before the first question
   const [turns, setTurns] = useState([]); // [{question, answer}]
   const [loading, setLoading] = useState(false);
   const [sources, setSources] = useState([]); // cumulative over the chat; [n] in an answer is sources[n-1]
   const [task, setTask] = useState(null); // the chat's active task, if the agent has started or reopened one
+  const [taskCollapsed, setTaskCollapsed] = useState(false);
   const [steps, setSteps] = useState([]); // the latest turn's tool calls
   const [ttft, setTtft] = useState(null);
   const [responseTime, setResponseTime] = useState(null);
@@ -715,6 +730,12 @@ function AgentScreen({ loadRequest, deletedChat }) {
 
   // Every distinct chunk the latest turn's searches returned, for the ground truth case.
   const allChunks = [...new Map(steps.flatMap((s) => s.chunks).map((c) => [c.id, c])).values()];
+
+  // The layout widens while a task is active; and switching to a task shows its panel expanded.
+  useEffect(() => {
+    onTaskChange(task);
+    setTaskCollapsed(false);
+  }, [task && task.id]);
 
   // Opening a past chat from the Sessions tab: show it as it was when it was last used.
   useEffect(() => {
@@ -791,78 +812,80 @@ function AgentScreen({ loadRequest, deletedChat }) {
   };
 
   return (
-    <>
-      {task && <TaskContext task={task} />}
-
-      {turns.length > 0 && (
-        <div className="chat-transcript">
-          {turns.map((turn, i) => (
-            <div key={i} className="chat-turn">
-              <div className="chat-question">{turn.question}</div>
-              <div className="chat-answer">
-                <ReactMarkdown>{turn.answer}</ReactMarkdown>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div className="ask-bar">
-        <input
-          type="text"
-          placeholder={turns.length === 0 ? "Ask the agent a question..." : "Ask a follow-up question..."}
-          value={question}
-          onChange={(e) => setQuestion(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
-        />
-        <button type="button" onClick={handleSubmit} disabled={loading}>
-          {loading ? "Waiting for the agent..." : "Submit"}
-        </button>
+    <div className={`agent-layout${task && taskCollapsed ? " task-collapsed" : ""}`}>
+      <div className="agent-main">
         {turns.length > 0 && (
-          <button type="button" className="secondary" onClick={handleNewChat} disabled={loading}>
-            New chat
-          </button>
-        )}
-      </div>
-
-      {error && <div className="error-box">{error}</div>}
-
-      {sources.length > 0 && (
-        <ol className="sources-list">
-          {sources.map((source, i) => (
-            <li key={source.id}>
-              <span className="source-id">
-                {source.document_id} (chunk {source.chunk_id})
-              </span>
-              <span className="source-snippet"> — {source.snippet}</span>
-            </li>
-          ))}
-        </ol>
-      )}
-
-      <details className="inspection-panel">
-        <summary>Inspection</summary>
-        <InspectionMetrics ttft={ttft} responseTime={responseTime} />
-
-        {steps.length > 0 && <GroundTruthToggle gt={gt} />}
-
-        {gt.mode && <GroundTruthForm gt={gt} onSave={() => gt.save(allChunks)} />}
-
-        {steps.length > 0 && (
-          <div className="agent-steps">
-            <label>Agent steps of the latest answer ({steps.length})</label>
-            {steps.map((step, i) => (
-              <details key={i} className="agent-step">
-                <summary>
-                  [{i + 1}] {step.tool} — {JSON.stringify(step.arguments)} ({step.chunks.length} chunks)
-                </summary>
-                <ChunkList chunks={step.chunks} gt={gt} />
-              </details>
+          <div className="chat-transcript">
+            {turns.map((turn, i) => (
+              <div key={i} className="chat-turn">
+                <div className="chat-question">{turn.question}</div>
+                <div className="chat-answer">
+                  <ReactMarkdown>{turn.answer}</ReactMarkdown>
+                </div>
+              </div>
             ))}
           </div>
         )}
-      </details>
-    </>
+
+        <div className="ask-bar">
+          <input
+            type="text"
+            placeholder={turns.length === 0 ? "Ask the agent a question..." : "Ask a follow-up question..."}
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+          />
+          <button type="button" onClick={handleSubmit} disabled={loading}>
+            {loading ? "Waiting for the agent..." : "Submit"}
+          </button>
+          {turns.length > 0 && (
+            <button type="button" className="secondary" onClick={handleNewChat} disabled={loading}>
+              New chat
+            </button>
+          )}
+        </div>
+
+        {error && <div className="error-box">{error}</div>}
+
+        {sources.length > 0 && (
+          <ol className="sources-list">
+            {sources.map((source, i) => (
+              <li key={source.id}>
+                <span className="source-id">
+                  {source.document_id} (chunk {source.chunk_id})
+                </span>
+                <span className="source-snippet"> — {source.snippet}</span>
+              </li>
+            ))}
+          </ol>
+        )}
+
+        <details className="inspection-panel">
+          <summary>Inspection</summary>
+          <InspectionMetrics ttft={ttft} responseTime={responseTime} />
+
+          {steps.length > 0 && <GroundTruthToggle gt={gt} />}
+
+          {gt.mode && <GroundTruthForm gt={gt} onSave={() => gt.save(allChunks)} />}
+
+          {steps.length > 0 && (
+            <div className="agent-steps">
+              <label>Agent steps of the latest answer ({steps.length})</label>
+              {steps.map((step, i) => (
+                <details key={i} className="agent-step">
+                  <summary>
+                    [{i + 1}] {step.tool} — {JSON.stringify(step.arguments)} ({step.chunks.length} chunks)
+                  </summary>
+                  <ChunkList chunks={step.chunks} gt={gt} />
+                </details>
+              ))}
+            </div>
+          )}
+        </details>
+      </div>
+
+      {task && <TaskPanel task={task} collapsed={taskCollapsed} onToggle={() => setTaskCollapsed((c) => !c)} />}
+    </div>
   );
 }
 
@@ -1320,6 +1343,7 @@ function App() {
   const [screen, setScreen] = useState("ingest");
   const [agentLoad, setAgentLoad] = useState(null); // a past chat the Agent tab should show
   const [deletedChat, setDeletedChat] = useState(null); // a chat just deleted in the Sessions tab
+  const [agentTask, setAgentTask] = useState(null); // the Agent tab's active task; its side panel needs a wider page
 
   const handleOpenSession = (session) => {
     setAgentLoad({ session });
@@ -1327,7 +1351,7 @@ function App() {
   };
 
   return (
-    <div className="app">
+    <div className={`app${screen === "agent" && agentTask ? " app-wide" : ""}`}>
       <h1>reportagent</h1>
 
       <div className="screen-selector">
@@ -1386,7 +1410,7 @@ function App() {
       {screen === "ingest" && <IngestScreen />}
       {/* The Agent tab stays mounted, so its chat survives switching tabs. */}
       <div style={{ display: screen === "agent" ? "block" : "none" }}>
-        <AgentScreen loadRequest={agentLoad} deletedChat={deletedChat} />
+        <AgentScreen loadRequest={agentLoad} deletedChat={deletedChat} onTaskChange={setAgentTask} />
       </div>
       {screen === "sessions" && <SessionsScreen onOpen={handleOpenSession} onDeleted={(id) => setDeletedChat({ id })} />}
       {screen === "corpus" && <CorpusScreen />}

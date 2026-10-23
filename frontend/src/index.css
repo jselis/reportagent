@@ -815,20 +815,108 @@ body {
   cursor: wait;
 }
 
-.task-context {
+.app-wide {
+  max-width: none; /* the task panel takes two thirds of the screen */
+}
+
+.agent-layout {
   display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.2rem 0.7rem;
-  margin: 1rem 0 0;
-  padding: 0.6rem 0.9rem;
+  align-items: flex-start;
+  gap: 1.5rem;
+}
+
+.agent-main {
+  flex: 1;
+  min-width: 20rem;
+}
+
+/* Task panel collapsed: the chat is back to a readable column, centered, with the bar at the screen's edge. */
+.agent-layout.task-collapsed .agent-main {
+  flex: 0 1 max(600px, 50vw);
+  margin: 0 auto;
+}
+
+/* The task side panel. Width and the name's rotation animate between collapsed and expanded. */
+.task-panel {
+  --collapsed-width: 56px;
+  position: sticky; /* stays in view while a long chat scrolls */
+  top: 1rem;
+  flex: none;
+  width: calc((100% - 1.5rem) * 2 / 3); /* two thirds of the page, the chat gets the rest */
+  box-sizing: border-box;
+  align-self: flex-start;
+  height: calc(100vh - 2rem);
+  min-height: 24rem;
+  margin-top: 1.5rem;
+  overflow: hidden;
   text-align: left;
   background: #e8f0fe;
   border-left: 4px solid #3b6fd4;
-  border-radius: 4px;
+  border-radius: 6px;
+  transition: width 0.3s ease;
 }
 
-.task-context-label {
+.task-panel.collapsed {
+  width: var(--collapsed-width);
+}
+
+.task-panel-toggle {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  font-size: 1.1rem;
+  line-height: 1;
+  color: #3b6fd4;
+  background: transparent;
+  border: 1px solid #b6c9ee;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.task-panel.collapsed .task-panel-toggle {
+  right: auto;
+  left: calc((var(--collapsed-width) - 4px - 2rem) / 2);
+}
+
+/* Both states place the name with a transform from the top-left corner, so the change is one smooth rotation. */
+.task-panel-name {
+  position: absolute;
+  top: 0;
+  left: 0;
+  max-width: calc(100% - 4.5rem);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 1.05rem;
+  font-weight: 600;
+  line-height: 1.4rem;
+  color: #1c2b4a;
+  transform-origin: 0 0;
+  transform: translate(1rem, 0.7rem) rotate(0deg);
+  transition: transform 0.3s ease;
+}
+
+.task-panel.collapsed .task-panel-name {
+  max-width: 20rem;
+  transform: translate(calc((var(--collapsed-width) - 4px + 1.4rem) / 2), 3.5rem) rotate(90deg);
+}
+
+.task-panel-body {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 3.4rem 1rem 1rem;
+  transition: opacity 0.2s ease;
+}
+
+.task-panel.collapsed .task-panel-body {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.task-panel-type {
   font-size: 0.75rem;
   font-weight: 700;
   text-transform: uppercase;
@@ -836,13 +924,18 @@ body {
   color: #3b6fd4;
 }
 
-.task-context-title {
-  font-weight: 600;
-  color: #1c2b4a;
-}
-
-.task-context-meta {
-  margin-left: auto;
+.task-panel-meta {
+  margin-top: 0.2rem;
   font-size: 0.85rem;
   color: #555;
+}
+
+.task-panel-placeholder {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  font-size: 0.9rem;
+  color: #777;
+  text-align: center;
+  border: 1px dashed #b6c9ee;
+  border-radius: 4px;
 }
